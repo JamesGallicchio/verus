@@ -16,6 +16,8 @@ use rustc_hir::OwnerNode;
 use rustc_interface::interface::Compiler;
 use rustc_session::config::ErrorOutputType;
 
+use serde::Serialize;
+use serde_json::json;
 use vir::messages::{
     message, note, note_bare, warning_bare, Message, MessageLabel, MessageLevel, MessageX, ToAny,
 };
@@ -28,7 +30,7 @@ use rustc_span::source_map::SourceMap;
 use rustc_span::Span;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs::File;
-use std::io::Write;
+use std::io::{self, BufWriter, Write};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use vir::context::{FuncCallGraphLogFiles, GlobalCtx};
@@ -2591,6 +2593,15 @@ impl Verifier {
         let (vir_crate, item_to_module_map) =
             crate::rust_to_vir::crate_to_vir(&mut ctxt, &other_vir_crates)
                 .map_err(map_err_diagnostics)?;
+
+        println!("Crate {} has {} functions", crate_name, vir_crate.functions.len());
+        let path = std::env::current_dir().unwrap().join("vir.json");
+        println!("Exporting VIR to {:?}", path);
+        let file = File::create(path).unwrap();
+        let val = vir_crate.functions.iter()
+            .map(|f| f.x.clone())
+            .collect::<Vec<_>>();
+        serde_json::to_writer_pretty(file, &val);
 
         let time2 = Instant::now();
         let vir_crate = vir::ast_sort::sort_krate(&vir_crate);

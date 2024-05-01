@@ -16,8 +16,8 @@ use rustc_hir::OwnerNode;
 use rustc_interface::interface::Compiler;
 use rustc_session::config::ErrorOutputType;
 
-use serde::Serialize;
-use serde_json::json;
+use std::fs::OpenOptions;
+
 use vir::messages::{
     message, note, note_bare, warning_bare, Message, MessageLabel, MessageLevel, MessageX, ToAny,
 };
@@ -30,14 +30,14 @@ use rustc_span::source_map::SourceMap;
 use rustc_span::Span;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs::File;
-use std::io::{self, BufWriter, Write};
+use std::io::Write;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use vir::context::{FuncCallGraphLogFiles, GlobalCtx};
 
 use crate::buckets::{Bucket, BucketId};
 use crate::expand_errors_driver::ExpandErrorsResult;
-use vir::ast::{Fun, Krate, VirErr};
+use vir::ast::{Fun, Krate, VirErr, Mode};
 use vir::ast_util::{fun_as_friendly_rust_name, is_visible_to};
 use vir::def::{
     path_to_string, CommandContext, CommandsWithContext, CommandsWithContextX, SnapPos,
@@ -2595,13 +2595,31 @@ impl Verifier {
                 .map_err(map_err_diagnostics)?;
 
         println!("Crate {} has {} functions", crate_name, vir_crate.functions.len());
-        let path = std::env::current_dir().unwrap().join("vir.json");
-        println!("Exporting VIR to {:?}", path);
-        let file = File::create(path).unwrap();
-        let val = vir_crate.functions.iter()
-            .map(|f| f.x.clone())
-            .collect::<Vec<_>>();
-        serde_json::to_writer_pretty(file, &val);
+        let path = std::env::current_dir().unwrap().join(crate_name.clone() + ".lean");
+        println!("Exporting Lean to {:?}", path);
+        let mut file = OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .open(path)
+            .unwrap();
+
+        for f in vir_crate.functions.iter() {
+            if f.x.mode == Mode::Spec {
+            let ident = f.x.name.path.segments.iter()
+                .map(|s| (**s).clone())
+                .collect::<Vec<String>>().join(".");
+            let _ = write!(file, "theorem {} :", ident);
+            for param in f.x.params.iter() {
+                let _ = write!(file, " ({} : {:?})", param.x.name.0, param.x.typ);
+            }
+            let _ = writeln!(file, "");
+        }}
+
+        //let val = vir_crate.functions.iter()
+        //    .map(|f| f.x.clone())
+        //    .collect::<Vec<_>>();
+        //let _ = serde_json::to_writer_pretty(file, &val);
 
         let time2 = Instant::now();
         let vir_crate = vir::ast_sort::sort_krate(&vir_crate);

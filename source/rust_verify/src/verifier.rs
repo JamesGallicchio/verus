@@ -2596,7 +2596,7 @@ impl Verifier {
 
         println!("Crate {} has {} functions", crate_name, vir_crate.functions.len());
         let path = std::env::current_dir().unwrap().join(crate_name.clone() + ".lean");
-        println!("Exporting Lean to {:?}", path);
+        println!("Exporting VIR to {:?}", path);
         let mut file = OpenOptions::new()
             .create(true)
             .truncate(true)
@@ -2604,22 +2604,27 @@ impl Verifier {
             .open(path)
             .unwrap();
 
-        for f in vir_crate.functions.iter() {
-            if f.x.mode == Mode::Spec {
-            let ident = f.x.name.path.segments.iter()
-                .map(|s| (**s).clone())
-                .collect::<Vec<String>>().join(".");
-            let _ = write!(file, "theorem {} :", ident);
-            for param in f.x.params.iter() {
-                let _ = write!(file, " ({} : {:?})", param.x.name.0, param.x.typ);
-            }
-            let _ = writeln!(file, "");
-        }}
+        //let _ = writeln!(file, "import Mathlib");
+//
+        //for f in vir_crate.functions.iter() {
+        //    if f.x.mode == Mode::Spec {
+        //        let ident = f.x.name.path.segments.iter()
+        //            .map(|s| (**s).clone())
+        //            .collect::<Vec<String>>().join(".");
+        //        let _ = write!(file, "theorem {} :", ident);
+        //        for param in f.x.params.iter() {
+        //            let _ = write!(file, " ({} : {:?})", param.x.name.0, param.x.typ);
+        //        }
+        //        let _ = writeln!(file, " {} :=\n  by aesop\n", f.x.ret.x.typ);
+        //    }
+        //}
 
-        //let val = vir_crate.functions.iter()
-        //    .map(|f| f.x.clone())
-        //    .collect::<Vec<_>>();
-        //let _ = serde_json::to_writer_pretty(file, &val);
+        let val = vir_crate.functions.iter()
+            .filter(|f| f.x.mode == Mode::Proof)
+            .map(|f| f.x.clone())
+            .collect::<Vec<_>>();
+        println!("Crate {} we are exporting {} proof functions", crate_name, val.len());
+        let _ = serde_json::to_writer_pretty(file, &val);
 
         let time2 = Instant::now();
         let vir_crate = vir::ast_sort::sort_krate(&vir_crate);

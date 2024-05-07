@@ -2604,19 +2604,15 @@ impl Verifier {
             .open(path)
             .unwrap();
 
-        let _ = writeln!(file, "import Mathlib");
+        let _ = writeln!(file, "import VerusLean.VerusBuiltins");
         let _ = writeln!(file);
 
         for f in vir_crate.functions.iter() {
-            write_fn_to_lean(&mut file, f);
+            if f.x.name.path.segments.first().is_some_and(|s| (**s) == "arithmetic") {
+                println!("processing fn: {:?}", f.x.name.path);
+                write_fn_to_lean(&mut file, f);
+            }
         }
-
-        let val = vir_crate.functions.iter()
-            .filter(|f| f.x.mode == Mode::Proof)
-            .map(|f| f.x.clone())
-            .collect::<Vec<_>>();
-        println!("Crate {} we are exporting {} proof functions", crate_name, val.len());
-        let _ = serde_json::to_writer_pretty(file, &val);
 
         let time2 = Instant::now();
         let vir_crate = vir::ast_sort::sort_krate(&vir_crate);
@@ -2737,62 +2733,61 @@ impl Verifier {
     }
 }
 
-fn write_fn_to_lean(w: &mut impl Write, f: &Function) {
-    println!("processing fn: {:?}", f.x.name.path);
+const VERUS_DEFAULT_TAC: &'static str = "verus_default_tac";
 
-    let keyword: &'static str = match &f.x.mode {
-        Mode::Spec => "abbrev",
-        Mode::Proof => "theorem",
+fn write_fn_to_lean(w: &mut impl Write, f: &Function) {
+    match &f.x.mode {
         Mode::Exec => return,
-    };
-    let retty: String = match &f.x.mode {
-        Mode::Spec  => {
-            if f.x.ensure.is_empty() {
-                typ_to_lean(&f.x.ret.x.typ)
-            } else {
+        Mode::Spec => {
+            let _ = writeln!(w, "noncomputable def {}", path_to_lean(&f.x.name.path));
+            if !f.x.ensure.is_empty() {
                 unimplemented!("spec fn with ensures: {:?}", f.x.ensure)
             }
+            if !f.x.params.is_empty() {
+                let _ = write!(w, "     ");
+                for param in f.x.params.iter() {
+                    let _ = write!(w, " {}", param_to_lean(param));
+                }
+                let _ = writeln!(w);
+            }        
+            let _ = writeln!(w, "  : {}", typ_to_lean(&f.x.ret.x.typ));
+            let body = match &f.x.body {
+                None => unimplemented!("spec fn with no body"),
+                Some(body) => body,
+            };
+            let _ = writeln!(w, "  := {}", expr_to_lean(&body));
+            if f.x.decrease.len() > 0 {
+                let es = f.x.decrease.iter().map(|d| expr_to_lean(d)).collect::<Vec<_>>().join(",");
+                let _ = writeln!(w, "termination_by Int.natAbs ({es})\ndecreasing_by all_goals (decreasing_with {VERUS_DEFAULT_TAC})");
+            }
+            let _ = writeln!(w);
         }
         Mode::Proof => {
+            let _ = writeln!(w, "theorem {}", path_to_lean(&f.x.name.path));
             if f.x.has_return() || f.x.has_return_name() {
                 unimplemented!("proof fn with return or return name: {:?}", f.x.ret)
-            } else {
-                f.x.ensure.iter().map(|e| expr_to_lean(e)).collect::<Vec<_>>().join(" ∧ ")
             }
-        }
-        Mode::Exec  => return,
-    };
-    let body: String = match &f.x.mode {
-        Mode::Spec  => {
-            match &f.x.body {
-                None => unimplemented!("spec fn with no body"),
-                Some(body) => expr_to_lean(&body),
+            if !f.x.params.is_empty() {
+                let _ = write!(w, "     ");
+                for param in f.x.params.iter() {
+                    let _ = write!(w, " {}", param_to_lean(param));
+                }
+                let _ = writeln!(w);
             }
+            if !f.x.require.is_empty() {
+                let _ = write!(w, "     ");
+                for (i, req) in f.x.require.iter().enumerate() {
+                    let _ = write!(w, " (_{} : {} := by {VERUS_DEFAULT_TAC})", i, expr_to_lean(req));
+                }
+                let _ = writeln!(w);
+            }        
+            let _ = writeln!(w, "  : {}",
+                f.x.ensure.iter().map(|e| expr_to_lean(e)).collect::<Vec<_>>().join(" ∧ "));
+            let _ = writeln!(w, "  := by {VERUS_DEFAULT_TAC}");
+            let _ = writeln!(w);
         }
-        Mode::Proof => {
-            "by sorry".into()
-        }
-        Mode::Exec  => return,
-    };
+    }
 
-    let _ = writeln!(w, "{keyword} {}", path_to_lean(&f.x.name.path));
-    if !f.x.params.is_empty() {
-        let _ = write!(w, "     ");
-        for param in f.x.params.iter() {
-            let _ = write!(w, " {}", param_to_lean(param));
-        }
-        let _ = writeln!(w);
-    }
-    if !f.x.require.is_empty() {
-        let _ = write!(w, "     ");
-        for (i, req) in f.x.require.iter().enumerate() {
-            let _ = write!(w, " (_{} : {})", i, expr_to_lean(req));
-        }
-        let _ = writeln!(w);
-    }
-    let _ = writeln!(w, "  : {}", retty);
-    let _ = writeln!(w, "  := {}", body);
-    let _ = writeln!(w);
 }
 
 fn varident_to_lean(vi: &VarIdent) -> String {

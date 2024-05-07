@@ -2605,6 +2605,8 @@ impl Verifier {
             .unwrap();
 
         let _ = writeln!(file, "import VerusLean.VerusBuiltins");
+        let _ = writeln!(file, "noncomputable section");
+        let _ = writeln!(file, "open Classical");
         let _ = writeln!(file);
 
         for f in vir_crate.functions.iter() {
@@ -2739,7 +2741,7 @@ fn write_fn_to_lean(w: &mut impl Write, f: &Function) {
     match &f.x.mode {
         Mode::Exec => return,
         Mode::Spec => {
-            let _ = writeln!(w, "noncomputable def {}", path_to_lean(&f.x.name.path));
+            let _ = writeln!(w, "def {}", path_to_lean(&f.x.name.path));
             if !f.x.ensure.is_empty() {
                 unimplemented!("spec fn with ensures: {:?}", f.x.ensure)
             }
@@ -2753,9 +2755,19 @@ fn write_fn_to_lean(w: &mut impl Write, f: &Function) {
             let _ = writeln!(w, "  : {}", typ_to_lean(&f.x.ret.x.typ));
             let body = match &f.x.body {
                 None => unimplemented!("spec fn with no body"),
-                Some(body) => body,
+                Some(body) => {
+                    let body = expr_to_lean(&body);
+                    match &f.x.decrease_when {
+                        None => body,
+                        Some(when) => {
+                            let when = expr_to_lean(&when);
+                            format!("(if {when} then {body} else undefined)")
+                        }
+                    }
+                    
+                }
             };
-            let _ = writeln!(w, "  := {}", expr_to_lean(&body));
+            let _ = writeln!(w, "  := {}", body);
             if f.x.decrease.len() > 0 {
                 let es = f.x.decrease.iter().map(|d| expr_to_lean(d)).collect::<Vec<_>>().join(",");
                 let _ = writeln!(w, "termination_by Int.natAbs ({es})\ndecreasing_by all_goals (decreasing_with {VERUS_DEFAULT_TAC})");

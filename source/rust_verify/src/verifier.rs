@@ -37,7 +37,7 @@ use vir::context::{FuncCallGraphLogFiles, GlobalCtx};
 
 use crate::buckets::{Bucket, BucketId};
 use crate::expand_errors_driver::ExpandErrorsResult;
-use vir::ast::{Expr, ExprX, Fun, Function, InequalityOp, Krate, Mode, Path, PathX, Typ, TypX, VirErr};
+use vir::ast::{ArithOp, CallTargetKind, Expr, ExprX, Fun, Function, InequalityOp, Krate, Mode, Param, Path, PathX, Stmt, Typ, TypX, VarIdent, VirErr};
 use vir::ast_util::{fun_as_friendly_rust_name, is_visible_to};
 use vir::def::{
     path_to_string, CommandContext, CommandsWithContext, CommandsWithContextX, SnapPos,
@@ -2605,10 +2605,10 @@ impl Verifier {
             .unwrap();
 
         let _ = writeln!(file, "import Mathlib");
+        let _ = writeln!(file);
+
         for f in vir_crate.functions.iter() {
-            if f.x.mode == Mode::Proof {
-                write_spec_fn_to_lean(&mut file, f);
-            }
+            write_fn_to_lean(&mut file, f);
         }
 
         let val = vir_crate.functions.iter()
@@ -2737,20 +2737,97 @@ impl Verifier {
     }
 }
 
+fn write_fn_to_lean(w: &mut impl Write, f: &Function) {
+    println!("processing fn: {:?}", f.x.name.path);
+
+    let keyword: &'static str = match &f.x.mode {
+        Mode::Spec => "abbrev",
+        Mode::Proof => "theorem",
+        Mode::Exec => return,
+    };
+    let retty: String = match &f.x.mode {
+        Mode::Spec  => {
+            if f.x.ensure.is_empty() {
+                typ_to_lean(&f.x.ret.x.typ)
+            } else {
+                unimplemented!("spec fn with ensures: {:?}", f.x.ensure)
+            }
+        }
+        Mode::Proof => {
+            if f.x.has_return() || f.x.has_return_name() {
+                unimplemented!("proof fn with return or return name: {:?}", f.x.ret)
+            } else {
+                f.x.ensure.iter().map(|e| expr_to_lean(e)).collect::<Vec<_>>().join(" ∧ ")
+            }
+        }
+        Mode::Exec  => return,
+    };
+    let body: String = match &f.x.mode {
+        Mode::Spec  => {
+            match &f.x.body {
+                None => unimplemented!("spec fn with no body"),
+                Some(body) => expr_to_lean(&body),
+            }
+        }
+        Mode::Proof => {
+            "by sorry".into()
+        }
+        Mode::Exec  => return,
+    };
+
+    let _ = writeln!(w, "{keyword} {}", path_to_lean(&f.x.name.path));
+    if !f.x.params.is_empty() {
+        let _ = write!(w, "     ");
+        for param in f.x.params.iter() {
+            let _ = write!(w, " {}", param_to_lean(param));
+        }
+        let _ = writeln!(w);
+    }
+    if !f.x.require.is_empty() {
+        let _ = write!(w, "     ");
+        for (i, req) in f.x.require.iter().enumerate() {
+            let _ = write!(w, " (_{} : {})", i, expr_to_lean(req));
+        }
+        let _ = writeln!(w);
+    }
+    let _ = writeln!(w, "  : {}", retty);
+    let _ = writeln!(w, "  := {}", body);
+    let _ = writeln!(w);
+}
+
+fn varident_to_lean(vi: &VarIdent) -> String {
+    (*vi.0).to_string()
+}
+
+fn param_to_lean(p: &Param) -> String {
+    format!("({} : {})", varident_to_lean(&p.x.name), typ_to_lean(&p.x.typ))
+}
+
 fn path_to_lean(p: &Path) -> String {
     p.segments.iter()
         .map(|s| (**s).clone())
         .collect::<Vec<String>>().join(".")
 }
 
-fn ineq_to_lean(op: &InequalityOp) -> String {
+fn ineq_to_lean(op: &InequalityOp) -> &'static str {
     match op {
-        vir::ast::InequalityOp::Le => "≤".into(),
-        vir::ast::InequalityOp::Ge => "≥".into(),
-        vir::ast::InequalityOp::Lt => "<".into(),
-        vir::ast::InequalityOp::Gt => ">".into(),
+        vir::ast::InequalityOp::Le => "≤",
+        vir::ast::InequalityOp::Ge => "≥",
+        vir::ast::InequalityOp::Lt => "<",
+        vir::ast::InequalityOp::Gt => ">",
     }
 }
+
+fn arith_to_lean(op: &ArithOp) -> &'static str {
+    match op {
+        ArithOp::Add => "+",
+        ArithOp::Sub => "-",
+        ArithOp::Mul => "*",
+        ArithOp::EuclideanDiv => "/",
+        ArithOp::EuclideanMod => "%",
+    }
+}
+
 
 fn expr_to_lean(e: &Expr) -> String {
     match &(*e).x {
@@ -2766,16 +2843,28 @@ fn expr_to_lean(e: &Expr) -> String {
                     format!("'{}'", c)
                 }
             },
-        ExprX::Var(x) => x.to_string(),
+        ExprX::Var(x) => varident_to_lean(x),
         ExprX::VarLoc(id) => unimplemented!("varloc {id}"),
         ExprX::VarAt(id, at) => unimplemented!("varat {id} {at:?}"),
         ExprX::ConstVar(name, spec) => unimplemented!("constvar {name:?} {spec:?}"),
         ExprX::StaticVar(name) => unimplemented!("staticvar {name:?}"),
         ExprX::Loc(l) => unimplemented!("mutable loc {l:?}"),
         ExprX::Call(target, args) => {
+            let args = args.iter().map(|x| expr_to_lean(x)).collect::<Vec<_>>().join(" ");
             match target {
-                vir::ast::CallTarget::Fun(_, _, _, _, _) => unimplemented!("fun"),
-                vir::ast::CallTarget::FnSpec(e) => expr_to_lean(e),
+                vir::ast::CallTarget::Fun(kind, funx, tyargs, path, spec) => {
+                    match kind {
+                        CallTargetKind::Static if tyargs.is_empty() && path.is_empty() => {
+                            let fun = path_to_lean(&funx.path);
+                            format!("({fun} {args})")
+                        }
+                        _ => unimplemented!("fun: ({kind:?}) ({funx:?}) ({tyargs:?}) ({path:?}) ({spec:?}) ({args:?})")
+                    }
+                }
+                vir::ast::CallTarget::FnSpec(e) => {
+                    let fun = expr_to_lean(e);
+                    format!("({fun} {args})")
+                }
                 vir::ast::CallTarget::BuiltinSpecFun(_, _, _) => unimplemented!("builtin spec fun"),
             }
         }
@@ -2789,9 +2878,28 @@ fn expr_to_lean(e: &Expr) -> String {
             match op {
                 vir::ast::UnaryOp::Not => format!("(!{arg})"),
                 vir::ast::UnaryOp::BitNot => unimplemented!("bitnot"),
-                vir::ast::UnaryOp::Trigger(_) => unimplemented!("trigger"),
+                vir::ast::UnaryOp::Trigger(ann) => arg,
                 vir::ast::UnaryOp::Clip { range, truncate } => {
-                    unimplemented!("clip")
+                    match range {
+                        vir::ast::IntRange::Int   => {
+                            arg
+                        }
+                        vir::ast::IntRange::Nat   => {
+                            format!("(clip Nat {arg})")
+                        }
+                        vir::ast::IntRange::U(width)  => {
+                            format!("(clip UInt{width} {arg})")
+                        }
+                        vir::ast::IntRange::I(width)  => {
+                            unimplemented!("(clip I{width} {arg})")
+                        }
+                        vir::ast::IntRange::USize => {
+                            unimplemented!("(clip USize {arg})")
+                        }
+                        vir::ast::IntRange::ISize => {
+                            unimplemented!("(clip ISize {arg})")
+                        }
+                    }
                 }
                 vir::ast::UnaryOp::CoerceMode { op_mode, from_mode, to_mode, kind } => {
                     unimplemented!("coerce mode {op_mode} {from_mode} {to_mode} {kind:?}")
@@ -2815,7 +2923,7 @@ fn expr_to_lean(e: &Expr) -> String {
                 vir::ast::BinaryOp::And     => format!("({lhs} ∧ {rhs})"),
                 vir::ast::BinaryOp::Or      => format!("({lhs} ∨ {rhs})"),
                 vir::ast::BinaryOp::Xor     => format!("({lhs} = {rhs})"),
-                vir::ast::BinaryOp::Implies => format!("({lhs} → {rhs}"),
+                vir::ast::BinaryOp::Implies => format!("({lhs} → {rhs})"),
                 vir::ast::BinaryOp::HeightCompare { strictly_lt, recursive_function_field } => {
                     unimplemented!("heightcompare")
                 }
@@ -2829,9 +2937,12 @@ fn expr_to_lean(e: &Expr) -> String {
                 vir::ast::BinaryOp::Ne => format!("({lhs} ≠ {rhs})"),
                 vir::ast::BinaryOp::Inequality(op) => {
                     let op = ineq_to_lean(op);
-                    format!("{lhs} {op} {rhs}")
+                    format!("({lhs} {op} {rhs})")
                 }
-                vir::ast::BinaryOp::Arith(op, mode) => unimplemented!("arith {op:?} {mode}"),
+                vir::ast::BinaryOp::Arith(op, mode) => {
+                    let op = arith_to_lean(op);
+                    format!("({lhs} {op} {rhs})")
+                }
                 vir::ast::BinaryOp::Bitwise(op, mode) => unimplemented!("bitwise {op:?} {mode}"),
                 vir::ast::BinaryOp::StrGetChar => format!("(String.get! {lhs} {rhs})"),
             }
@@ -2843,13 +2954,13 @@ fn expr_to_lean(e: &Expr) -> String {
                     ops.iter().enumerate().map(|(i,x)| {
                         let lhs = expr_to_lean(&args[i]);
                         let rhs = expr_to_lean(&args[i+1]);
-                        let op: String =
+                        let op =
                             match x {
-                                vir::ast::ChainedOp::MultiEq => "=".into(),
+                                vir::ast::ChainedOp::MultiEq => "=",
                                 vir::ast::ChainedOp::Inequality(op) => ineq_to_lean(op),
                             };
                         format!("({lhs} {op} {rhs})")
-                    }).collect::<Vec<_>>().join("")
+                    }).collect::<Vec<_>>().join(" ∧ ")
                 }
             }
         }
@@ -2857,7 +2968,7 @@ fn expr_to_lean(e: &Expr) -> String {
             let body = expr_to_lean(body);
             let binders: String =
                 binders.iter().map(|b| {
-                    let name = &b.name;
+                    let name = (b.name.0).to_string();
                     let a = typ_to_lean(&b.a);
                     format!("({name} : {a})")
                 }).collect::<Vec<_>>().join(" ");
@@ -2876,25 +2987,85 @@ fn expr_to_lean(e: &Expr) -> String {
             unimplemented!("choose")
         }
         ExprX::WithTriggers { triggers, body } => {
-            unimplemented!("withtriggers")
+            expr_to_lean(body)
         }
-        ExprX::Assign { init_not_mut, lhs, rhs, op } => todo!(),
-        ExprX::Fuel(_, _, _) => todo!(),
-        ExprX::RevealString(_) => todo!(),
-        ExprX::Header(_) => todo!(),
-        ExprX::AssertAssume { is_assume, expr } => todo!(),
-        ExprX::AssertBy { vars, require, ensure, proof } => todo!(),
-        ExprX::AssertQuery { requires, ensures, proof, mode } => todo!(),
-        ExprX::AssertCompute(_, _) => todo!(),
-        ExprX::If(_, _, _) => todo!(),
-        ExprX::Match(_, _) => todo!(),
-        ExprX::Loop { loop_isolation, is_for_loop, label, cond, body, invs, decrease } => todo!(),
-        ExprX::OpenInvariant(_, _, _, _) => todo!(),
-        ExprX::Return(_) => todo!(),
-        ExprX::BreakOrContinue { label, is_break } => todo!(),
-        ExprX::Ghost { alloc_wrapper, tracked, expr } => todo!(),
-        ExprX::Block(_, _) => todo!(),
-        ExprX::AirStmt(_) => todo!(),
+        ExprX::Assign { init_not_mut, lhs, rhs, op } => {
+            unimplemented!("assign")
+        }
+        ExprX::Fuel(_, _, _) =>
+            unimplemented!("fuel"),
+        ExprX::RevealString(_) =>
+            unimplemented!("revealstring"),
+        ExprX::Header(_) =>
+            unimplemented!("header"),
+        ExprX::AssertAssume { is_assume, expr } =>
+            unimplemented!("assertassume"),
+        ExprX::AssertBy { vars, require, ensure, proof } => unimplemented!("assertby"),
+        ExprX::AssertQuery { requires, ensures, proof, mode } => unimplemented!("assertquery"),
+        ExprX::AssertCompute(_, _) => unimplemented!("assertcompute"),
+        ExprX::If(cond, tt, ff) => {
+            match ff {
+                None => unimplemented!("if with no false branch: ({cond:?}) ({tt:?}) ({ff:?})"),
+                Some(ff) => {
+                    let cond = expr_to_lean(cond);
+                    let tt = expr_to_lean(tt);
+                    let ff = expr_to_lean(ff);
+                    format!("(if {cond} then {tt} else {ff})")
+                }
+            }
+        }
+        ExprX::Match(_, _) =>   unimplemented!("match"),
+        ExprX::Loop { loop_isolation, is_for_loop, label, cond, body, invs, decrease } =>
+            unimplemented!("loop"),
+        ExprX::OpenInvariant(_, _, _, _) => unimplemented!("openinvariant"),
+        ExprX::Return(_) => unimplemented!("return"),
+        ExprX::BreakOrContinue { label, is_break } => unimplemented!("breakorcontinue"),
+        ExprX::Ghost { alloc_wrapper, tracked, expr } => unimplemented!("ghost"),
+        ExprX::Block(stms, ret) => {
+            match ret {
+                None => unimplemented!("Block with no return: {stms:?}"),
+                Some(ret) => {
+                    let stms: String = stms.iter().map(|s|
+                        stmt_to_lean(s) + "\n"
+                    ).collect::<Vec<String>>().join("");
+                    let expr = expr_to_lean(ret);
+                    format!("(\n{stms}{expr})")
+                }
+            }
+        }
+        ExprX::AirStmt(_) =>    unimplemented!("airstmt"),
+    }
+}
+
+fn stmt_to_lean(s: &Stmt) -> String {
+    match &(*s).x {
+        vir::ast::StmtX::Expr(e) => {
+            let e = expr_to_lean(e);
+            format!("let _ := {e}")
+        }
+        vir::ast::StmtX::Decl { pattern, mode, init } => {
+            match &pattern.x {
+                vir::ast::PatternX::Wildcard(_) => unimplemented!("wildcard pattern"),
+                vir::ast::PatternX::Var { name, mutable } => {
+                    if *mutable {
+                        unimplemented!("mutable var pattern")
+                    } else {
+                        match init {
+                            None => unimplemented!("var pattern with no init value"),
+                            Some(init) =>
+                                format!("let {} := {}", varident_to_lean(name), expr_to_lean(init))
+                        }
+                    }
+                }
+                vir::ast::PatternX::Binding { name, mutable, sub_pat } =>
+                    unimplemented!("binding pattern"),
+                vir::ast::PatternX::Tuple(_) => unimplemented!("tuple pattern"),
+                vir::ast::PatternX::Constructor(_, _, _) => unimplemented!("constructor pattern"),
+                vir::ast::PatternX::Or(_, _) => unimplemented!("or pattern"),
+                vir::ast::PatternX::Expr(_) => unimplemented!("expr pattern"),
+                vir::ast::PatternX::Range(_, _) => unimplemented!("range pattern"),
+            }
+        }
     }
 }
 
@@ -2920,13 +3091,25 @@ fn typ_to_lean(t: &Typ) -> String {
             }
         }
         TypX::Lambda(dom, cod) => {
-            dom.iter().chain(std::iter::once(cod)).map(typ_to_lean).collect::<Vec<_>>().join(" → ")
+            format!("({})", dom.iter().chain(std::iter::once(cod)).map(typ_to_lean).collect::<Vec<_>>().join(" → "))
         }
-        TypX::AnonymousClosure(_, _, _) => unimplemented!(),
-        TypX::FnDef(_, _, _) => unimplemented!(),
+        TypX::AnonymousClosure(_, _, _) => unimplemented!("anonclosure"),
+        TypX::FnDef(_, _, _) => unimplemented!("fndef"),
         TypX::Datatype(path, _, _) => unimplemented!("datatype {path:?}"),
         TypX::StrSlice => "String".into(),
-        TypX::Primitive(p, _) => unimplemented!("primitive {p:?}"),
+        TypX::Primitive(p, args) => {
+            match p {
+                vir::ast::Primitive::Array => {
+                    if args.len() == 1 {
+                        let arg = typ_to_lean(unsafe {args.get_unchecked(0)});
+                        format!("(Array {arg})")
+                    } else {
+                        unimplemented!("array ({args:?})")
+                    }
+                }
+                vir::ast::Primitive::Slice => unimplemented!("slice ({args:?})"),
+            }
+        }
         TypX::Decorate(_, typ) => typ_to_lean(typ),
         TypX::Boxed(t) => typ_to_lean(t),
         TypX::TypParam(p) => p.to_string(),
@@ -2937,30 +3120,6 @@ fn typ_to_lean(t: &Typ) -> String {
         TypX::ConstInt(i) => unimplemented!("const int {i}"),
         TypX::Air(_) => unimplemented!("air"),
     }
-}
-
-fn write_spec_fn_to_lean(w: &mut impl Write, f: &Function) {
-    let _ = write!(w, "def {} ", path_to_lean(&f.x.name.path));
-    for param in f.x.params.iter() {
-        let _ = write!(w, " ({} : {})", param.x.name.0, typ_to_lean(&param.x.typ));
-    }
-    for (i, req) in f.x.require.iter().enumerate() {
-        let _ = write!(w, " (_{} : {})", i, expr_to_lean(req));
-    }
-    let _ = writeln!(w, " : {} :=\n  by aesop\n", typ_to_lean(&f.x.ret.x.typ));
-
-    for (i, ens) in f.x.ensure.iter().enumerate() {
-        let _ = write!(w, "");
-    }
-}
-
-fn write_proof_fn_to_lean(w: &mut impl Write, f: &Function) {
-    let _ = write!(w, "theorem {}", path_to_lean(&f.x.name.path));
-    for param in f.x.params.iter() {
-        let _ = write!(w, " ({} : {})", param.x.name.0, typ_to_lean(&param.x.typ));
-    }
-    let _ = writeln!(w, " {} :=", typ_to_lean(&f.x.ret.x.typ));
-    let _ = writeln!(w, "  by aesop");
 }
 
 fn delete_dir_if_exists_and_is_dir(dir: &std::path::PathBuf) -> Result<(), VirErr> {

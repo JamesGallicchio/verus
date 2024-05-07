@@ -1,4 +1,6 @@
 import VerusLean.VerusBuiltins
+noncomputable section
+open Classical
 
 theorem arithmetic.internals.div_internals_nonlinear.lemma_div_of0
       (d : Int)
@@ -16,7 +18,7 @@ theorem arithmetic.internals.div_internals_nonlinear.lemma_small_div
   : (∀ (x : Int) (d : Int), (((0 ≤ x) ∧ (x < d) ∧ (d > 0)) → ((x / d) = 0)))
   := by verus_default_tac
 
-noncomputable def arithmetic.internals.general_internals.is_le
+def arithmetic.internals.general_internals.is_le
       (x : Int) (y : Int)
   : Bool
   := (
@@ -40,7 +42,7 @@ theorem arithmetic.internals.general_internals.lemma_induction_helper
   : (f x)
   := by verus_default_tac
 
-noncomputable def arithmetic.internals.mod_internals_nonlinear.modulus
+def arithmetic.internals.mod_internals_nonlinear.modulus
       (x : Int) (y : Int)
   : Int
   := (
@@ -106,20 +108,20 @@ theorem arithmetic.internals.mul_internals_nonlinear.lemma_mul_strict_inequality
   : ((x * z) < (y * z))
   := by verus_default_tac
 
-noncomputable def arithmetic.internals.div_internals.div_pos
+def arithmetic.internals.div_internals.div_pos
       (x : Int) (d : Int)
   : Int
-  := (
+  := (if (d > 0) then (
 (if (x < 0) then (
 ((0 - 1) + (arithmetic.internals.div_internals.div_pos (x + d) d))) else (if (x < d) then (
 0) else (
-(1 + (arithmetic.internals.div_internals.div_pos (x - d) d))))))
+(1 + (arithmetic.internals.div_internals.div_pos (x - d) d)))))) else undefined)
 termination_by Int.natAbs ((if (x < 0) then (
 (d - x)) else (
 x)))
 decreasing_by all_goals (decreasing_with verus_default_tac)
 
-noncomputable def arithmetic.internals.div_internals.div_recursive
+def arithmetic.internals.div_internals.div_recursive
       (x : Int) (d : Int)
   : Int
   := (
@@ -133,7 +135,7 @@ theorem arithmetic.internals.div_internals.lemma_div_basics
   : (((n / n) = 1) ∧ ((0 - ((0 - n) / n)) = 1)) ∧ (∀ (x : Int), ((0 ≤ x) ∧ (x < n) = ((x / n) = 0))) ∧ (∀ (x : Int), (((x + n) / n) = ((x / n) + 1))) ∧ (∀ (x : Int), (((x - n) / n) = ((x / n) - 1)))
   := by verus_default_tac
 
-noncomputable def arithmetic.internals.div_internals.div_auto_plus
+def arithmetic.internals.div_internals.div_auto_plus
       (n : Int)
   : Bool
   := (
@@ -141,7 +143,7 @@ noncomputable def arithmetic.internals.div_internals.div_auto_plus
 let z := ((x % n) + (y % n))
 (((0 ≤ z) ∧ (z < n) ∧ (((x + y) / n) = ((x / n) + (y / n)))) ∨ ((n ≤ z) ∧ (z < (n + n)) ∧ (((x + y) / n) = (((x / n) + (y / n)) + 1)))))))
 
-noncomputable def arithmetic.internals.div_internals.div_auto_minus
+def arithmetic.internals.div_internals.div_auto_minus
       (n : Int)
   : Bool
   := (
@@ -149,7 +151,7 @@ noncomputable def arithmetic.internals.div_internals.div_auto_minus
 let z := ((x % n) - (y % n))
 (((0 ≤ z) ∧ (z < n) ∧ (((x - y) / n) = ((x / n) - (y / n)))) ∨ (((0 - n) ≤ z) ∧ (z < 0) ∧ (((x - y) / n) = (((x / n) - (y / n)) - 1)))))))
 
-noncomputable def arithmetic.internals.div_internals.div_auto
+def arithmetic.internals.div_internals.div_auto
       (n : Int)
   : Bool
   := (
@@ -187,14 +189,14 @@ theorem arithmetic.internals.div_internals.lemma_div_induction_auto_forall
   : (arithmetic.internals.div_internals.div_auto n) ∧ (∀ (i : Int), (f i))
   := by verus_default_tac
 
-noncomputable def arithmetic.internals.mod_internals.mod_recursive
+def arithmetic.internals.mod_internals.mod_recursive
       (x : Int) (d : Int)
   : Int
-  := (
+  := (if (d > 0) then (
 (if (x < 0) then (
 (arithmetic.internals.mod_internals.mod_recursive (d + x) d)) else (if (x < d) then (
 x) else (
-(arithmetic.internals.mod_internals.mod_recursive (x - d) d)))))
+(arithmetic.internals.mod_internals.mod_recursive (x - d) d))))) else undefined)
 termination_by Int.natAbs ((if (x < 0) then (
 (d - x)) else (
 x)))
@@ -254,7 +256,7 @@ theorem arithmetic.internals.mod_internals.lemma_quotient_and_remainder
   : (q = (x / n)) ∧ (r = (x % n))
   := by verus_default_tac
 
-noncomputable def arithmetic.internals.mod_internals.mod_auto_plus
+def arithmetic.internals.mod_internals.mod_auto_plus
       (n : Int)
   : Bool
   := (
@@ -262,7 +264,7 @@ noncomputable def arithmetic.internals.mod_internals.mod_auto_plus
 let z := ((x % n) + (y % n))
 (((0 ≤ z) ∧ (z < n) ∧ (((x + y) % n) = z)) ∨ ((n ≤ z) ∧ (z < (n + n)) ∧ (((x + y) % n) = (z - n)))))))
 
-noncomputable def arithmetic.internals.mod_internals.mod_auto_minus
+def arithmetic.internals.mod_internals.mod_auto_minus
       (n : Int)
   : Bool
   := (
@@ -270,7 +272,7 @@ noncomputable def arithmetic.internals.mod_internals.mod_auto_minus
 let z := ((x % n) - (y % n))
 (((0 ≤ z) ∧ (z < n) ∧ (((x - y) % n) = z)) ∨ (((0 - n) ≤ z) ∧ (z < 0) ∧ (((x - y) % n) = (z + n)))))))
 
-noncomputable def arithmetic.internals.mod_internals.mod_auto
+def arithmetic.internals.mod_internals.mod_auto
       (n : Int)
   : Bool
   := (
@@ -296,7 +298,7 @@ theorem arithmetic.internals.mod_internals.lemma_mod_induction_auto_forall
   : (arithmetic.internals.mod_internals.mod_auto n) ∧ (∀ (i : Int), (f i))
   := by verus_default_tac
 
-noncomputable def arithmetic.internals.mul_internals.mul_pos
+def arithmetic.internals.mul_internals.mul_pos
       (x : Int) (y : Int)
   : Int
   := (
@@ -306,7 +308,7 @@ noncomputable def arithmetic.internals.mul_internals.mul_pos
 termination_by Int.natAbs (x)
 decreasing_by all_goals (decreasing_with verus_default_tac)
 
-noncomputable def arithmetic.internals.mul_internals.mul_recursive
+def arithmetic.internals.mul_internals.mul_recursive
       (x : Int) (y : Int)
   : Int
   := (
@@ -339,7 +341,7 @@ theorem arithmetic.internals.mul_internals.lemma_mul_distributes_minus
   : (((x - y) * z) = ((x * z) - (y * z)))
   := by verus_default_tac
 
-noncomputable def arithmetic.internals.mul_internals.mul_auto
+def arithmetic.internals.mul_internals.mul_auto
   : Bool
   := (
 (((∀ (x : Int) (y : Int), ((x * y) = (y * x))) ∧ (∀ (x : Int) (y : Int) (z : Int), (((x + y) * z) = ((x * z) + (y * z))))) ∧ (∀ (x : Int) (y : Int) (z : Int), (((x - y) * z) = ((x * z) - (y * z))))))
@@ -815,7 +817,7 @@ theorem arithmetic.div_mod.lemma_mod_equivalence
   : (((x % m) = (y % m)) = (((x - y) % m) = 0))
   := by verus_default_tac
 
-noncomputable def arithmetic.div_mod.is_mod_equivalent
+def arithmetic.div_mod.is_mod_equivalent
       (x : Int) (y : Int) (m : Int)
   : Bool
   := (
@@ -855,7 +857,7 @@ theorem arithmetic.div_mod.lemma_mod_breakdown
   : ((y * z) > 0) ∧ ((x % (y * z)) = ((y * ((x / y) % z)) + (x % y)))
   := by verus_default_tac
 
-noncomputable def arithmetic.logarithm.log
+def arithmetic.logarithm.log
       (base : Int) (pow : Int)
   : Int
   := (
@@ -1067,7 +1069,7 @@ theorem arithmetic.mul.lemma_mul_properties_prove_mul_properties_auto
   : (∀ (x : Int) (y : Int), ((x * y) = (y * x))) ∧ (∀ (x : Int), ((x * 1) = (1 * x)) ∧ ((1 * x) = x)) ∧ (∀ (x : Int) (y : Int) (z : Int), (((x < y) ∧ (z > 0)) → ((x * z) < (y * z)))) ∧ (∀ (x : Int) (y : Int) (z : Int), (((x ≤ y) ∧ (z ≥ 0)) → ((x * z) ≤ (y * z)))) ∧ (∀ (x : Int) (y : Int) (z : Int), ((x * (y + z)) = ((x * y) + (x * z)))) ∧ (∀ (x : Int) (y : Int) (z : Int), ((x * (y - z)) = ((x * y) - (x * z)))) ∧ (∀ (x : Int) (y : Int) (z : Int), (((y + z) * x) = ((y * x) + (z * x)))) ∧ (∀ (x : Int) (y : Int) (z : Int), (((y - z) * x) = ((y * x) - (z * x)))) ∧ (∀ (x : Int) (y : Int) (z : Int), ((x * (y * z)) = ((x * y) * z))) ∧ (∀ (x : Int) (y : Int), ((!((x * y) = 0)) = ((!(x = 0)) ∧ (!(y = 0))))) ∧ (∀ (x : Int) (y : Int), (((0 ≤ x) ∧ (0 ≤ y)) → (0 ≤ (x * y)))) ∧ (∀ (x : Int) (y : Int), ((((0 < x) ∧ (0 < y)) ∧ (0 ≤ (x * y))) → ((x ≤ (x * y)) ∧ (y ≤ (x * y))))) ∧ (∀ (x : Int) (y : Int), (((1 < x) ∧ (0 < y)) → (y < (x * y)))) ∧ (∀ (x : Int) (y : Int), (((0 < x) ∧ (0 < y)) → (y ≤ (x * y)))) ∧ (∀ (x : Int) (y : Int), (((0 < x) ∧ (0 < y)) → (0 < (x * y))))
   := by verus_default_tac
 
-noncomputable def arithmetic.power.pow
+def arithmetic.power.pow
       (b : Int) (e : Nat)
   : Int
   := (
@@ -1204,7 +1206,7 @@ theorem arithmetic.power.lemma_pow_mod_noop
   : (((arithmetic.power.pow (b % m) e) % m) = ((arithmetic.power.pow b e) % m))
   := by verus_default_tac
 
-noncomputable def arithmetic.power2.pow2
+def arithmetic.power2.pow2
       (e : Nat)
   : Nat
   := (

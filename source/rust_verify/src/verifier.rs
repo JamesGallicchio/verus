@@ -37,7 +37,7 @@ use vir::context::{FuncCallGraphLogFiles, GlobalCtx};
 
 use crate::buckets::{Bucket, BucketId};
 use crate::expand_errors_driver::ExpandErrorsResult;
-use vir::ast::{ArithOp, CallTargetKind, Expr, ExprX, Fun, Function, InequalityOp, Krate, Mode, Param, Path, PathX, Stmt, Typ, TypX, VarIdent, VirErr};
+use vir::ast::{ArithOp, CallTargetKind, Expr, ExprX, Fun, FunX, Function, InequalityOp, Krate, Mode, Param, Path, PathX, Stmt, Typ, TypX, VarIdent, VirErr};
 use vir::ast_util::{fun_as_friendly_rust_name, is_visible_to};
 use vir::def::{
     path_to_string, CommandContext, CommandsWithContext, CommandsWithContextX, SnapPos,
@@ -1945,6 +1945,7 @@ impl Verifier {
 
         let reporter = Reporter::new(spans, compiler);
         let krate = self.vir_crate.clone().expect("vir_crate should be initialized");
+        let crate_name = self.crate_name.clone().expect("crate_name");
         let air_no_span = self.air_no_span.clone().expect("air_no_span should be initialized");
 
         #[cfg(debug_assertions)]
@@ -1965,7 +1966,7 @@ impl Verifier {
 
         let mut global_ctx = vir::context::GlobalCtx::new(
             &krate,
-            Arc::new(self.crate_name.clone().expect("crate_name")),
+            Arc::new(crate_name.clone()),
             air_no_span.clone(),
             self.args.rlimit,
             Arc::new(std::sync::Mutex::new(None)),
@@ -1975,6 +1976,46 @@ impl Verifier {
         )?;
         vir::recursive_types::check_traits(&krate, &global_ctx)?;
         let krate = vir::ast_simplify::simplify_krate(&mut global_ctx, &krate)?;
+
+        println!("Crate {} has {} functions", crate_name, krate.functions.len());
+        let path = std::env::current_dir().unwrap().join(crate_name.clone() + ".lean");
+        println!("Exporting Lean to {:?}", path);
+        let mut file = OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .open(path)
+            .unwrap();
+
+        let _ = writeln!(file, "import VerusLean.VerusBuiltins");
+        let _ = writeln!(file, "noncomputable section");
+        let _ = writeln!(file, "open Classical");
+        let _ = writeln!(file);
+
+        for scc in global_ctx.func_call_sccs.iter() {
+            let nodes = global_ctx.func_call_graph.get_scc_nodes(scc);
+            if nodes.len() > 1 {
+                let _ = writeln!(file, "mutual");
+            }
+            for node in nodes.iter() {
+                match node {
+                    vir::recursion::Node::Fun(f) => {
+                        if f.path.segments.first().is_some_and(|s| (**s) == "arithmetic") {
+                            println!("processing fn: {:?}", f.path);
+                            for f in krate.functions.iter()
+                                    .find(|f2| (*f2.x.name.path) == (*f.path))
+                                    .iter() {
+                                write_fn_to_lean(&mut file, f);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if nodes.len() > 1 {
+                let _ = writeln!(file, "end");
+            }
+        }
 
         if self.args.log_all || self.args.log_args.log_vir_simple {
             let mut file = self.create_log_file(None, crate::config::VIR_SIMPLE_FILE_SUFFIX)?;
@@ -2594,28 +2635,6 @@ impl Verifier {
             crate::rust_to_vir::crate_to_vir(&mut ctxt, &other_vir_crates)
                 .map_err(map_err_diagnostics)?;
 
-        println!("Crate {} has {} functions", crate_name, vir_crate.functions.len());
-        let path = std::env::current_dir().unwrap().join(crate_name.clone() + ".lean");
-        println!("Exporting VIR to {:?}", path);
-        let mut file = OpenOptions::new()
-            .create(true)
-            .truncate(true)
-            .write(true)
-            .open(path)
-            .unwrap();
-
-        let _ = writeln!(file, "import VerusLean.VerusBuiltins");
-        let _ = writeln!(file, "noncomputable section");
-        let _ = writeln!(file, "open Classical");
-        let _ = writeln!(file);
-
-        for f in vir_crate.functions.iter() {
-            if f.x.name.path.segments.first().is_some_and(|s| (**s) == "arithmetic") {
-                println!("processing fn: {:?}", f.x.name.path);
-                write_fn_to_lean(&mut file, f);
-            }
-        }
-
         let time2 = Instant::now();
         let vir_crate = vir::ast_sort::sort_krate(&vir_crate);
         self.current_crate_modules = Some(vir_crate.modules.clone());
@@ -2803,7 +2822,12 @@ fn write_fn_to_lean(w: &mut impl Write, f: &Function) {
 }
 
 fn varident_to_lean(vi: &VarIdent) -> String {
-    (*vi.0).to_string()
+    let name = (*vi.0).to_string();
+    if name.contains(|n: char| !n.is_ascii_alphanumeric()) {
+        format!("«{}»", name)
+    } else {
+        name
+    }
 }
 
 fn param_to_lean(p: &Param) -> String {

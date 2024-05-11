@@ -2760,6 +2760,7 @@ fn write_fn_to_lean(w: &mut impl Write, f: &Function) {
     match &f.x.mode {
         Mode::Exec => return,
         Mode::Spec => {
+            let _ = writeln!(w, "@[verus_attr]");
             let _ = writeln!(w, "def {}", path_to_lean(&f.x.name.path));
             if !f.x.ensure.is_empty() {
                 unimplemented!("spec fn with ensures: {:?}", f.x.ensure)
@@ -2794,6 +2795,7 @@ fn write_fn_to_lean(w: &mut impl Write, f: &Function) {
             let _ = writeln!(w);
         }
         Mode::Proof => {
+            let _ = writeln!(w, "@[verus_attr]");
             let _ = writeln!(w, "theorem {}", path_to_lean(&f.x.name.path));
             if f.x.has_return() || f.x.has_return_name() {
                 unimplemented!("proof fn with return or return name: {:?}", f.x.ret)

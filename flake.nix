@@ -18,10 +18,14 @@
       in rec {      
         devShell = pkgs.mkShell {
           shellHook = ''
+            SHELL=${pkgs.bashInteractive}/bin/bash
             VERUS_Z3_PATH=$(whereis z3 | awk '{print $2}')
             source tools/activate
             code .
           '';
+          buildInputs = [
+            pkgs.bashInteractive
+          ];
           nativeBuildInputs = with pkgs; [
             rustup
             tokei

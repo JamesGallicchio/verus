@@ -67,3 +67,5 @@ mod user_filter;
 pub mod util;
 pub mod verifier;
 pub mod verus_items;
+
+mod vlir;

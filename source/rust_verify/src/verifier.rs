@@ -44,6 +44,8 @@ use vir::def::{
 };
 use vir::prelude::PreludeConfig;
 
+use crate::vlir;
+
 const RLIMIT_PER_SECOND: f32 = 3000000f32;
 
 #[derive(Clone, Hash, PartialEq, Eq)]
@@ -1978,44 +1980,38 @@ impl Verifier {
         let krate = vir::ast_simplify::simplify_krate(&mut global_ctx, &krate)?;
 
         println!("Crate {} has {} functions", crate_name, krate.functions.len());
-        let path = std::env::current_dir().unwrap().join(crate_name.clone() + ".lean");
-        println!("Exporting Lean to {:?}", path);
-        let mut file = OpenOptions::new()
-            .create(true)
-            .truncate(true)
-            .write(true)
-            .open(path)
-            .unwrap();
 
-        let _ = writeln!(file, "import VerusLean.VerusBuiltins");
-        let _ = writeln!(file, "noncomputable section");
-        let _ = writeln!(file, "open Classical");
-        let _ = writeln!(file);
+        let mut fns: Vec<vlir::Function> = Vec::new();
 
         for scc in global_ctx.func_call_sccs.iter() {
             let nodes = global_ctx.func_call_graph.get_scc_nodes(scc);
-            if nodes.len() > 1 {
-                let _ = writeln!(file, "mutual");
-            }
             for node in nodes.iter() {
                 match node {
                     vir::recursion::Node::Fun(f) => {
-                        if f.path.segments.first().is_some_and(|s| (**s) == "arithmetic") {
-                            println!("processing fn: {:?}", f.path);
-                            for f in krate.functions.iter()
-                                    .find(|f2| (*f2.x.name.path) == (*f.path))
-                                    .iter() {
-                                write_fn_to_lean(&mut file, f);
+                        println!("processing fn: {:?}", f.path);
+                        for f in krate.functions.iter()
+                                .find(|f2| (*f2.x.name.path) == (*f.path))
+                                .iter() {
+                            if f.x.mode == Mode::Proof {
+                                fns.push((**f).clone().into());
                             }
                         }
                     }
                     _ => {}
                 }
             }
-            if nodes.len() > 1 {
-                let _ = writeln!(file, "end");
-            }
         }
+
+        let path = std::env::current_dir().unwrap().join(crate_name.clone() + ".json");
+        let file = OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .open(path)
+            .unwrap();
+
+        let _ = serde_json::to_writer(file, &fns);
+
 
         if self.args.log_all || self.args.log_args.log_vir_simple {
             let mut file = self.create_log_file(None, crate::config::VIR_SIMPLE_FILE_SUFFIX)?;
@@ -2754,406 +2750,6 @@ impl Verifier {
     }
 }
 
-const VERUS_DEFAULT_TAC: &'static str = "verus_default_tac";
-
-fn write_fn_to_lean(w: &mut impl Write, f: &Function) {
-    match &f.x.mode {
-        Mode::Exec => return,
-        Mode::Spec => {
-            let _ = writeln!(w, "@[verus_attr]");
-            let _ = writeln!(w, "def {}", path_to_lean(&f.x.name.path));
-            if !f.x.ensure.is_empty() {
-                unimplemented!("spec fn with ensures: {:?}", f.x.ensure)
-            }
-            if !f.x.params.is_empty() {
-                let _ = write!(w, "     ");
-                for param in f.x.params.iter() {
-                    let _ = write!(w, " {}", param_to_lean(param));
-                }
-                let _ = writeln!(w);
-            }        
-            let _ = writeln!(w, "  : {}", typ_to_lean(&f.x.ret.x.typ));
-            let body = match &f.x.body {
-                None => unimplemented!("spec fn with no body"),
-                Some(body) => {
-                    let body = expr_to_lean(&body);
-                    match &f.x.decrease_when {
-                        None => body,
-                        Some(when) => {
-                            let when = expr_to_lean(&when);
-                            format!("(if {when} then {body} else undefined)")
-                        }
-                    }
-                    
-                }
-            };
-            let _ = writeln!(w, "  := {}", body);
-            if f.x.decrease.len() > 0 {
-                let es = f.x.decrease.iter().map(|d| expr_to_lean(d)).collect::<Vec<_>>().join(",");
-                let _ = writeln!(w, "termination_by Int.natAbs ({es})\ndecreasing_by all_goals (decreasing_with {VERUS_DEFAULT_TAC})");
-            }
-            let _ = writeln!(w);
-        }
-        Mode::Proof => {
-            let _ = writeln!(w, "@[verus_attr]");
-            let _ = writeln!(w, "theorem {}", path_to_lean(&f.x.name.path));
-            if f.x.has_return() || f.x.has_return_name() {
-                unimplemented!("proof fn with return or return name: {:?}", f.x.ret)
-            }
-            if !f.x.params.is_empty() {
-                let _ = write!(w, "     ");
-                for param in f.x.params.iter() {
-                    let _ = write!(w, " {}", param_to_lean(param));
-                }
-                let _ = writeln!(w);
-            }
-            if !f.x.require.is_empty() {
-                let _ = write!(w, "     ");
-                for (i, req) in f.x.require.iter().enumerate() {
-                    let _ = write!(w, " (_{} : {} := by {VERUS_DEFAULT_TAC})", i, expr_to_lean(req));
-                }
-                let _ = writeln!(w);
-            }        
-            let _ = writeln!(w, "  : {}",
-                f.x.ensure.iter().map(|e| expr_to_lean(e)).collect::<Vec<_>>().join(" ∧ "));
-            let _ = writeln!(w, "  := by {VERUS_DEFAULT_TAC}");
-            let _ = writeln!(w);
-        }
-    }
-
-}
-
-fn varident_to_lean(vi: &VarIdent) -> String {
-    let name = (*vi.0).to_string();
-    if name.contains(|n: char| !n.is_ascii_alphanumeric()) {
-        format!("«{}»", name)
-    } else {
-        name
-    }
-}
-
-fn param_to_lean(p: &Param) -> String {
-    format!("({} : {})", varident_to_lean(&p.x.name), typ_to_lean(&p.x.typ))
-}
-
-fn path_to_lean(p: &Path) -> String {
-    p.segments.iter()
-        .map(|s| (**s).clone())
-        .collect::<Vec<String>>().join(".")
-}
-
-fn ineq_to_lean(op: &InequalityOp) -> &'static str {
-    match op {
-        vir::ast::InequalityOp::Le => "≤",
-        vir::ast::InequalityOp::Ge => "≥",
-        vir::ast::InequalityOp::Lt => "<",
-        vir::ast::InequalityOp::Gt => ">",
-    }
-}
-
-fn arith_to_lean(op: &ArithOp) -> &'static str {
-    match op {
-        ArithOp::Add => "+",
-        ArithOp::Sub => "-",
-        ArithOp::Mul => "*",
-        ArithOp::EuclideanDiv => "/",
-        ArithOp::EuclideanMod => "%",
-    }
-}
-
-
-fn expr_to_lean(e: &Expr) -> String {
-    match &(*e).x {
-        ExprX::Const(c) =>
-            match c {
-                vir::ast::Constant::Bool(b) => b.to_string(),
-                vir::ast::Constant::Int(i) => i.to_string(),
-                vir::ast::Constant::StrSlice(s) => {
-                    s.to_string().replace("\\", "\\\\")
-                        .replace("\"", "\\\"")
-                }
-                vir::ast::Constant::Char(c) => {
-                    format!("'{}'", c)
-                }
-            },
-        ExprX::Var(x) => varident_to_lean(x),
-        ExprX::VarLoc(id) => unimplemented!("varloc {id}"),
-        ExprX::VarAt(id, at) => unimplemented!("varat {id} {at:?}"),
-        ExprX::ConstVar(name, spec) => unimplemented!("constvar {name:?} {spec:?}"),
-        ExprX::StaticVar(name) => unimplemented!("staticvar {name:?}"),
-        ExprX::Loc(l) => unimplemented!("mutable loc {l:?}"),
-        ExprX::Call(target, args) => {
-            let args = args.iter().map(|x| expr_to_lean(x)).collect::<Vec<_>>().join(" ");
-            match target {
-                vir::ast::CallTarget::Fun(kind, funx, tyargs, path, spec) => {
-                    match kind {
-                        CallTargetKind::Static if tyargs.is_empty() && path.is_empty() => {
-                            let fun = path_to_lean(&funx.path);
-                            format!("({fun} {args})")
-                        }
-                        _ => unimplemented!("fun: ({kind:?}) ({funx:?}) ({tyargs:?}) ({path:?}) ({spec:?}) ({args:?})")
-                    }
-                }
-                vir::ast::CallTarget::FnSpec(e) => {
-                    let fun = expr_to_lean(e);
-                    format!("({fun} {args})")
-                }
-                vir::ast::CallTarget::BuiltinSpecFun(_, _, _) => unimplemented!("builtin spec fun"),
-            }
-        }
-        ExprX::Tuple(args) => {
-            format!("({})", args.iter().map(|x| expr_to_lean(x)).collect::<Vec<_>>().join(","))
-        }
-        ExprX::Ctor(_, _, _, _)   => unimplemented!("Ctor"),
-        ExprX::NullaryOpr(_)      => unimplemented!("NullaryOpr"),
-        ExprX::Unary(op, arg)        => {
-            let arg = expr_to_lean(arg);
-            match op {
-                vir::ast::UnaryOp::Not => format!("(!{arg})"),
-                vir::ast::UnaryOp::BitNot => unimplemented!("bitnot"),
-                vir::ast::UnaryOp::Trigger(ann) => arg,
-                vir::ast::UnaryOp::Clip { range, truncate } => {
-                    match range {
-                        vir::ast::IntRange::Int   => {
-                            arg
-                        }
-                        vir::ast::IntRange::Nat   => {
-                            format!("(clip Nat {arg})")
-                        }
-                        vir::ast::IntRange::U(width)  => {
-                            format!("(clip UInt{width} {arg})")
-                        }
-                        vir::ast::IntRange::I(width)  => {
-                            unimplemented!("(clip I{width} {arg})")
-                        }
-                        vir::ast::IntRange::USize => {
-                            unimplemented!("(clip USize {arg})")
-                        }
-                        vir::ast::IntRange::ISize => {
-                            unimplemented!("(clip ISize {arg})")
-                        }
-                    }
-                }
-                vir::ast::UnaryOp::CoerceMode { op_mode, from_mode, to_mode, kind } => {
-                    unimplemented!("coerce mode {op_mode} {from_mode} {to_mode} {kind:?}")
-                }
-                vir::ast::UnaryOp::MustBeFinalized  => unimplemented!("MustBeFinalized"),
-                vir::ast::UnaryOp::HeightTrigger    => unimplemented!("HeightTrigger"),
-                vir::ast::UnaryOp::StrLen           => unimplemented!("StrLen"),
-                vir::ast::UnaryOp::StrIsAscii       => unimplemented!("StrIsAscii"),
-                vir::ast::UnaryOp::CharToInt        => unimplemented!("CharToInt"),
-                vir::ast::UnaryOp::InferSpecForLoopIter { print_hint } => {
-                    unimplemented!("inferspec")
-                }
-                vir::ast::UnaryOp::CastToInteger => unimplemented!("casttointeger"),
-            }
-        }
-        ExprX::UnaryOpr(_, _)     => unimplemented!("UnaryOpr"),
-        ExprX::Binary(op, lhs, rhs)    => {
-            let lhs = expr_to_lean(lhs);
-            let rhs = expr_to_lean(rhs);
-            match op {
-                vir::ast::BinaryOp::And     => format!("({lhs} ∧ {rhs})"),
-                vir::ast::BinaryOp::Or      => format!("({lhs} ∨ {rhs})"),
-                vir::ast::BinaryOp::Xor     => format!("({lhs} = {rhs})"),
-                vir::ast::BinaryOp::Implies => format!("({lhs} → {rhs})"),
-                vir::ast::BinaryOp::HeightCompare { strictly_lt, recursive_function_field } => {
-                    unimplemented!("heightcompare")
-                }
-                vir::ast::BinaryOp::Eq(mode) => {
-                    match mode {
-                        Mode::Spec => format!("({lhs} = {rhs})"),
-                        Mode::Proof => unimplemented!("eq {mode}"),
-                        Mode::Exec  => unimplemented!("eq {mode}"),
-                    }
-                }
-                vir::ast::BinaryOp::Ne => format!("({lhs} ≠ {rhs})"),
-                vir::ast::BinaryOp::Inequality(op) => {
-                    let op = ineq_to_lean(op);
-                    format!("({lhs} {op} {rhs})")
-                }
-                vir::ast::BinaryOp::Arith(op, mode) => {
-                    let op = arith_to_lean(op);
-                    format!("({lhs} {op} {rhs})")
-                }
-                vir::ast::BinaryOp::Bitwise(op, mode) => unimplemented!("bitwise {op:?} {mode}"),
-                vir::ast::BinaryOp::StrGetChar => format!("(String.get! {lhs} {rhs})"),
-            }
-        }
-        ExprX::BinaryOpr(_, _, _) => unimplemented!("BinaryOpr"),
-        ExprX::Multi(op, args) => {
-            match op {
-                vir::ast::MultiOp::Chained(ops) => {
-                    ops.iter().enumerate().map(|(i,x)| {
-                        let lhs = expr_to_lean(&args[i]);
-                        let rhs = expr_to_lean(&args[i+1]);
-                        let op =
-                            match x {
-                                vir::ast::ChainedOp::MultiEq => "=",
-                                vir::ast::ChainedOp::Inequality(op) => ineq_to_lean(op),
-                            };
-                        format!("({lhs} {op} {rhs})")
-                    }).collect::<Vec<_>>().join(" ∧ ")
-                }
-            }
-        }
-        ExprX::Quant(q, binders, body) => {
-            let body = expr_to_lean(body);
-            let binders: String =
-                binders.iter().map(|b| {
-                    let name = (b.name.0).to_string();
-                    let a = typ_to_lean(&b.a);
-                    format!("({name} : {a})")
-                }).collect::<Vec<_>>().join(" ");
-            match q.quant {
-                air::ast::Quant::Forall => format!("(∀ {binders}, {body})"),
-                air::ast::Quant::Exists => format!("(∃ {binders}, {body})"),
-            }
-        }
-        ExprX::Closure(_, _)      => unimplemented!("Closure"),
-        ExprX::ExecClosure { params, body, requires, ensures, ret, external_spec } => {
-            unimplemented!("execclosure")
-        }
-        ExprX::ArrayLiteral(_) => unimplemented!("ArrayLiteral"),
-        ExprX::ExecFnByName(_) => unimplemented!("ExecFnByName"),
-        ExprX::Choose { params, cond, body } => {
-            unimplemented!("choose")
-        }
-        ExprX::WithTriggers { triggers, body } => {
-            expr_to_lean(body)
-        }
-        ExprX::Assign { init_not_mut, lhs, rhs, op } => {
-            unimplemented!("assign")
-        }
-        ExprX::Fuel(_, _, _) =>
-            unimplemented!("fuel"),
-        ExprX::RevealString(_) =>
-            unimplemented!("revealstring"),
-        ExprX::Header(_) =>
-            unimplemented!("header"),
-        ExprX::AssertAssume { is_assume, expr } =>
-            unimplemented!("assertassume"),
-        ExprX::AssertBy { vars, require, ensure, proof } => unimplemented!("assertby"),
-        ExprX::AssertQuery { requires, ensures, proof, mode } => unimplemented!("assertquery"),
-        ExprX::AssertCompute(_, _) => unimplemented!("assertcompute"),
-        ExprX::If(cond, tt, ff) => {
-            match ff {
-                None => unimplemented!("if with no false branch: ({cond:?}) ({tt:?}) ({ff:?})"),
-                Some(ff) => {
-                    let cond = expr_to_lean(cond);
-                    let tt = expr_to_lean(tt);
-                    let ff = expr_to_lean(ff);
-                    format!("(if {cond} then {tt} else {ff})")
-                }
-            }
-        }
-        ExprX::Match(_, _) =>   unimplemented!("match"),
-        ExprX::Loop { loop_isolation, is_for_loop, label, cond, body, invs, decrease } =>
-            unimplemented!("loop"),
-        ExprX::OpenInvariant(_, _, _, _) => unimplemented!("openinvariant"),
-        ExprX::Return(_) => unimplemented!("return"),
-        ExprX::BreakOrContinue { label, is_break } => unimplemented!("breakorcontinue"),
-        ExprX::Ghost { alloc_wrapper, tracked, expr } => unimplemented!("ghost"),
-        ExprX::Block(stms, ret) => {
-            match ret {
-                None => unimplemented!("Block with no return: {stms:?}"),
-                Some(ret) => {
-                    let stms: String = stms.iter().map(|s|
-                        stmt_to_lean(s) + "\n"
-                    ).collect::<Vec<String>>().join("");
-                    let expr = expr_to_lean(ret);
-                    format!("(\n{stms}{expr})")
-                }
-            }
-        }
-        ExprX::AirStmt(_) =>    unimplemented!("airstmt"),
-    }
-}
-
-fn stmt_to_lean(s: &Stmt) -> String {
-    match &(*s).x {
-        vir::ast::StmtX::Expr(e) => {
-            let e = expr_to_lean(e);
-            format!("let _ := {e}")
-        }
-        vir::ast::StmtX::Decl { pattern, mode, init } => {
-            match &pattern.x {
-                vir::ast::PatternX::Wildcard(_) => unimplemented!("wildcard pattern"),
-                vir::ast::PatternX::Var { name, mutable } => {
-                    if *mutable {
-                        unimplemented!("mutable var pattern")
-                    } else {
-                        match init {
-                            None => unimplemented!("var pattern with no init value"),
-                            Some(init) =>
-                                format!("let {} := {}", varident_to_lean(name), expr_to_lean(init))
-                        }
-                    }
-                }
-                vir::ast::PatternX::Binding { name, mutable, sub_pat } =>
-                    unimplemented!("binding pattern"),
-                vir::ast::PatternX::Tuple(_) => unimplemented!("tuple pattern"),
-                vir::ast::PatternX::Constructor(_, _, _) => unimplemented!("constructor pattern"),
-                vir::ast::PatternX::Or(_, _) => unimplemented!("or pattern"),
-                vir::ast::PatternX::Expr(_) => unimplemented!("expr pattern"),
-                vir::ast::PatternX::Range(_, _) => unimplemented!("range pattern"),
-            }
-        }
-    }
-}
-
-fn typ_to_lean(t: &Typ) -> String {
-    match t.as_ref() {
-        TypX::Bool => "Bool".into(),
-        TypX::Int(i) => {
-            match i {
-                vir::ast::IntRange::Int   => "Int".into(),
-                vir::ast::IntRange::Nat   => "Nat".into(),
-                vir::ast::IntRange::U(w) => format!("UInt{}", w),
-                vir::ast::IntRange::I(w) => unimplemented!("int{w}"),
-                vir::ast::IntRange::USize => "USize".into(),
-                vir::ast::IntRange::ISize => unimplemented!("isize"),
-            }
-        }
-        TypX::Char => "Char".into(),
-        TypX::Tuple(typs) => {
-            if typs.len() == 0 {
-                "Unit".into()
-            } else {
-                format!("({})", typs.iter().map(|t| typ_to_lean(t)).collect::<Vec<_>>().join(" × "))
-            }
-        }
-        TypX::Lambda(dom, cod) => {
-            format!("({})", dom.iter().chain(std::iter::once(cod)).map(typ_to_lean).collect::<Vec<_>>().join(" → "))
-        }
-        TypX::AnonymousClosure(_, _, _) => unimplemented!("anonclosure"),
-        TypX::FnDef(_, _, _) => unimplemented!("fndef"),
-        TypX::Datatype(path, _, _) => unimplemented!("datatype {path:?}"),
-        TypX::StrSlice => "String".into(),
-        TypX::Primitive(p, args) => {
-            match p {
-                vir::ast::Primitive::Array => {
-                    if args.len() == 1 {
-                        let arg = typ_to_lean(unsafe {args.get_unchecked(0)});
-                        format!("(Array {arg})")
-                    } else {
-                        unimplemented!("array ({args:?})")
-                    }
-                }
-                vir::ast::Primitive::Slice => unimplemented!("slice ({args:?})"),
-            }
-        }
-        TypX::Decorate(_, typ) => typ_to_lean(typ),
-        TypX::Boxed(t) => typ_to_lean(t),
-        TypX::TypParam(p) => p.to_string(),
-        TypX::Projection { trait_typ_args, trait_path, name } => {
-            unimplemented!("projection {trait_typ_args:?} {trait_path:?} {name}")
-        }
-        TypX::TypeId => unimplemented!("typeid"),
-        TypX::ConstInt(i) => unimplemented!("const int {i}"),
-        TypX::Air(_) => unimplemented!("air"),
-    }
-}
 
 fn delete_dir_if_exists_and_is_dir(dir: &std::path::PathBuf) -> Result<(), VirErr> {
     Ok(if dir.exists() {

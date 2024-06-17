@@ -6,200 +6,85 @@
 
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use vir::ast::{Idents, MultiOp, Quant, AutospecUsage, BinaryOp, BinaryOpr, CallTarget, Constant, Fun, Ident, Mode, NullaryOpr, Path, Typ, UnaryOp, UnaryOpr, VarAt};
+use vir::ast::{
+    BinaryOp, BinaryOpr, CallTarget, Constant, Fun, Ident, Idents, MultiOp,
+    NullaryOpr, Path, Quant, Typ, UnaryOp, UnaryOpr
+};
+
+fn varident(v: vir::ast::VarIdent) -> Ident {
+    v.0
+}
 
 #[derive(Clone,Debug,Serialize,Deserialize)]
-struct Binder<T: Clone>(Arc<BinderX<T>>);
+pub struct Binder<A: Clone>(Arc<BinderX<A>>);
 #[derive(Clone,Debug,Serialize,Deserialize)]
-struct Binders<T: Clone>(Arc<Vec<Binder<T>>>);
+pub struct Binders<A: Clone>(Arc<Vec<Binder<A>>>);
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-struct BinderX<T: Clone>(air::ast::BinderX<T>);
+pub struct BinderX<A: Clone> {
+    pub name: Ident,
+    pub a: A,
+}
 
-impl<T0: Clone, T: From<T0> + Clone> From<air::ast::Binder<T0>> for Binder<T> {
-    fn from(x: air::ast::Binder<T0>) -> Binder<T> {
-        Binder(Arc::new(<air::ast::BinderX<T0> as Clone>::clone(&x).into()))
+impl<T0: Clone, T: From<T0> + Clone> From<vir::ast::Binders<T0>> for Binders<T> {
+    fn from(value: vir::ast::Binders<T0>) -> Self {
+        Binders(Arc::new(value.as_ref().clone().into_iter().map(|b|
+            b.into()
+        ).collect()))
     }
 }
 
-impl<T0: Clone, T: From<T0> + Clone> From<air::ast::Binders<T0>> for Binders<T> {
-    fn from(x: air::ast::Binders<T0>) -> Binders<T> {
-        Binders(Arc::new(
-            x.iter().map(|x| x.clone().into()).collect()
-        ))
+impl<T0: Clone, T: From<T0> + Clone> From<vir::ast::Binder<T0>> for Binder<T> {
+    fn from(value: vir::ast::Binder<T0>) -> Self {
+        Binder(Arc::new(value.as_ref().clone().into()))
     }
 }
 
 impl<T0: Clone, T: From<T0> + Clone> From<air::ast::BinderX<T0>> for BinderX<T> {
-    fn from(x: air::ast::BinderX<T0>) -> BinderX<T> {
-        BinderX(air::ast::BinderX {
-            name: x.name.clone(),
-            a: x.a.into(),
-        })
-    }
-}
-
-#[derive(Clone,Debug,Serialize,Deserialize)]
-struct VarBinder<A: Clone>(Arc<VarBinderX<A>>);
-#[derive(Clone,Debug,Serialize,Deserialize)]
-struct VarBinders<A: Clone>(Arc<Vec<VarBinder<A>>>);
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct VarBinderX<A: Clone> {
-    pub name: VarIdent,
-    pub a: A,
-}
-
-impl<T0: Clone, T: From<T0> + Clone> From<vir::ast::VarBinder<T0>> for VarBinder<T> {
-    fn from(x: vir::ast::VarBinder<T0>) -> Self {
-        VarBinder(Arc::new(<vir::ast::VarBinderX<T0> as Clone>::clone(&x).into()))
-    }
-}
-
-impl<T0: Clone, T: From<T0> + Clone> From<vir::ast::VarBinders<T0>> for VarBinders<T> {
-    fn from(x: vir::ast::VarBinders<T0>) -> Self {
-        VarBinders(Arc::new(
-            x.iter().map(|x| <std::sync::Arc<vir::ast::VarBinderX<T0>> as Clone>::clone(&x).into()).collect()
-        ))
-    }
-}
-
-impl<T0: Clone, T: From<T0> + Clone> From<vir::ast::VarBinderX<T0>> for VarBinderX<T> {
-    fn from(x: vir::ast::VarBinderX<T0>) -> VarBinderX<T> {
-        VarBinderX {
-            name: x.name.into(),
-            a: x.a.into(),
+    fn from(value: air::ast::BinderX<T0>) -> Self {
+        BinderX {
+            name: value.name,
+            a: value.a.into(),
         }
     }
 }
 
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub enum VarIdentDisambiguate {
-    // AIR names that don't derive from rustc's names:
-    AirLocal,
-    // rustc's parameter unique id comes from the function body; no body means no id:
-    NoBodyParam,
-    // TypParams are normally Idents, but sometimes we mix TypParams into lists of VarIdents:
-    TypParamBare,
-    TypParamSuffixed,
-    TypParamDecorated,
-    // Fields are normally Idents, but sometimes we mix field names into lists of VarIdents:
-    Field,
-    RustcId(usize),
-    // We track whether the variable is SST/AIR statement-bound or expression-bound,
-    // to help drop unnecessary ids from expression-bound variables
-    VirRenumbered { is_stmt: bool, does_shadow: bool, id: u64 },
-    // Some expression-bound variables don't need an id
-    VirExprNoNumber,
-    // We rename parameters to VirParam if the parameters don't conflict with each other
-    VirParam,
-    // Recursive definitions have an extra copy of the parameters
-    VirParamRecursion(usize),
-    // Capture-avoiding substitution creates new names:
-    VirSubst(u64),
-    VirTemp(u64),
-    ExpandErrorsDecl(u64),
-}
-
-impl From<vir::ast::VarIdentDisambiguate> for VarIdentDisambiguate {
-    fn from(value: vir::ast::VarIdentDisambiguate) -> Self {
-        match value {
-            vir::ast::VarIdentDisambiguate::AirLocal => VarIdentDisambiguate::AirLocal,
-            vir::ast::VarIdentDisambiguate::NoBodyParam => VarIdentDisambiguate::NoBodyParam,
-            vir::ast::VarIdentDisambiguate::TypParamBare => VarIdentDisambiguate::TypParamBare,
-            vir::ast::VarIdentDisambiguate::TypParamSuffixed => VarIdentDisambiguate::TypParamSuffixed,
-            vir::ast::VarIdentDisambiguate::TypParamDecorated => VarIdentDisambiguate::TypParamDecorated,
-            vir::ast::VarIdentDisambiguate::Field => VarIdentDisambiguate::Field,
-            vir::ast::VarIdentDisambiguate::RustcId(id) => VarIdentDisambiguate::RustcId(id),
-            vir::ast::VarIdentDisambiguate::VirRenumbered { is_stmt, does_shadow, id } =>
-                VarIdentDisambiguate::VirRenumbered {is_stmt, does_shadow, id},
-            vir::ast::VarIdentDisambiguate::VirExprNoNumber => VarIdentDisambiguate::VirExprNoNumber,
-            vir::ast::VarIdentDisambiguate::VirParam => VarIdentDisambiguate::VirParam,
-            vir::ast::VarIdentDisambiguate::VirParamRecursion(id) => VarIdentDisambiguate::VirParamRecursion(id),
-            vir::ast::VarIdentDisambiguate::VirSubst(id) => VarIdentDisambiguate::VirSubst(id),
-            vir::ast::VarIdentDisambiguate::VirTemp(id) => VarIdentDisambiguate::VirTemp(id),
-            vir::ast::VarIdentDisambiguate::ExpandErrorsDecl(id) => VarIdentDisambiguate::ExpandErrorsDecl(id),
-        }
+impl<T0: Clone, T: From<T0> + Clone> From<vir::ast::VarBinders<T0>> for Binders<T> {
+    fn from(value: vir::ast::VarBinders<T0>) -> Self {
+        Binders(Arc::new(value.as_ref().clone().into_iter().map(|b|
+            b.into()
+        ).collect()))
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct VarIdent(pub Ident, pub VarIdentDisambiguate);
-
-impl From<vir::ast::VarIdent> for VarIdent {
-    fn from(value: vir::ast::VarIdent) -> Self {
-        VarIdent(value.0,value.1.into())
+impl<T0: Clone, T: From<T0> + Clone> From<vir::ast::VarBinder<T0>> for Binder<T> {
+    fn from(value: vir::ast::VarBinder<T0>) -> Self {
+        Binder(Arc::new(value.as_ref().clone().into()))
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct Params(Arc<Vec<Param>>);
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct Param(Arc<ParamX>);
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ParamX {
-    pub name: VarIdent,
-    pub typ: Typ,
-    pub mode: Mode,
-    /// An &mut parameter
-    pub is_mut: bool,
-    /// If the parameter uses a Ghost(x) or Tracked(x) pattern to unwrap the value, this is
-    /// the mode of the resulting unwrapped x variable (Spec for Ghost(x), Proof for Tracked(x)).
-    /// We also save a copy of the original wrapped name for lifetime_generate
-    pub unwrapped_info: Option<(Mode, VarIdent)>,
-}
-
-impl From<vir::ast::Param> for Param {
-    fn from(v: vir::ast::Param) -> Self {
-        Param(Arc::new(<vir::ast::ParamX as Clone>::clone(&v.x).into()))
-    }
-}
-
-impl From<vir::ast::Params> for Params {
-    fn from(v: vir::ast::Params) -> Self {
-        Params(Arc::new(v.iter().map(|v| <std::sync::Arc<vir::def::Spanned<vir::ast::ParamX>> as Clone>::clone(&v).into()).collect()))
-    }
-}
-
-impl From<vir::ast::ParamX> for ParamX {
-    fn from(value: vir::ast::ParamX) -> Self {
-        ParamX {
-            name: value.name.into(),
-            typ: value.typ.into(),
-            mode: value.mode,
-            is_mut: value.is_mut,
-            unwrapped_info: value.unwrapped_info.map(|(a,b)| (a,b.into())),
+impl<T0: Clone, T: From<T0> + Clone> From<vir::ast::VarBinderX<T0>> for BinderX<T> {
+    fn from(value: vir::ast::VarBinderX<T0>) -> Self {
+        BinderX {
+            name: varident(value.name),
+            a: value.a.into(),
         }
     }
 }
 
 #[derive(Clone,Debug,Serialize,Deserialize)]
-struct Expr(Arc<ExprX>);
+pub struct Expr(Arc<ExprX>);
 #[derive(Clone,Debug,Serialize,Deserialize)]
-struct Exprs(Arc<Vec<Expr>>);
+pub struct Exprs(Arc<Vec<Expr>>);
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum ExprX {
     /// Constant
     Const(Constant),
     /// Local variable as a right-hand side
-    Var(VarIdent),
-    /// Local variable as a left-hand side
-    VarLoc(VarIdent),
-    /// Local variable, at a different stage (e.g. a mutable reference in the post-state)
-    VarAt(VarIdent, VarAt),
-    /// Use of a const variable.  Note: ast_simplify replaces this with Call.
-    ConstVar(Fun, AutospecUsage),
-    /// Use of a static variable.
-    StaticVar(Fun),
-    /// Mutable reference (location)
-    Loc(Expr),
+    Var(Ident),
     /// Call to a function passing some expression arguments
     Call(CallTarget, Exprs),
-    /// Note: ast_simplify replaces this with Ctor
-    Tuple(Exprs),
     /// Construct datatype value of type Path and variant Ident,
     /// with field initializers Binders<Expr> and an optional ".." update expression.
     /// For tuple-style variants, the fields are named "_0", "_1", etc.
@@ -218,26 +103,26 @@ pub enum ExprX {
     /// Primitive multi-operand operation
     Multi(MultiOp, Exprs),
     /// Quantifier (forall/exists), binding the variables in Binders, with body Expr
-    Quant(Quant, VarBinders<Typ>, Expr),
+    Quant(Quant, Binders<Typ>, Expr),
     /// Specification closure
-    Closure(VarBinders<Typ>, Expr),
+    Closure(Binders<Typ>, Expr),
     /// Executable closure
     ExecClosure {
-        params: VarBinders<Typ>,
+        params: Binders<Typ>,
         body: Expr,
         requires: Exprs,
         ensures: Exprs,
-        ret: VarBinder<Typ>,
+        ret: Binder<Typ>,
     },
     /// Array literal (can also be used for sequence literals in the future)
     ArrayLiteral(Exprs),
     /// Executable function (declared with 'fn' and referred to by name)
     ExecFnByName(Fun),
     /// Choose specification values satisfying a condition, compute body
-    Choose { params: VarBinders<Typ>, cond: Expr, body: Expr },
-    /// Assign to local variable
-    /// init_not_mut = true ==> a delayed initialization of a non-mutable variable
-    Assign { init_not_mut: bool, lhs: Expr, rhs: Expr, op: Option<BinaryOp> },
+    Choose { params: Binders<Typ>, cond: Expr, body: Expr },
+    // /// Assign to local variable
+    // /// init_not_mut = true ==> a delayed initialization of a non-mutable variable
+    // Assign { init_not_mut: bool, lhs: Expr, rhs: Expr, op: Option<BinaryOp> },
     // /// Assert or assume
     // AssertAssume { is_assume: bool, expr: Expr },
     // /// Assert-forall or assert-by statement
@@ -268,24 +153,15 @@ impl From<vir::ast::Exprs> for Exprs {
 impl From<vir::ast::ExprX> for ExprX {
     fn from(v: vir::ast::ExprX) -> ExprX {
         match v {
-        vir::ast::ExprX::Const(c) =>
-            ExprX::Const(c.clone()),
-        vir::ast::ExprX::Var(v) =>
-            ExprX::Var(v.into()),
-        vir::ast::ExprX::VarLoc(v) =>
-            ExprX::VarLoc(v.into()),
-        vir::ast::ExprX::VarAt(v, a) =>
-            ExprX::VarAt(v.into(), a),
-        vir::ast::ExprX::ConstVar(f, au) =>
-            ExprX::ConstVar(f.clone(), au),
-        vir::ast::ExprX::StaticVar(f) =>
-            ExprX::StaticVar(f.clone()),
-        vir::ast::ExprX::Loc(a) =>
-            ExprX::Loc(a.into()),
-        vir::ast::ExprX::Call(a,b) =>
-            ExprX::Call(a.clone(),b.into()),
-        vir::ast::ExprX::Tuple(a) =>
-            ExprX::Tuple(a.into()),
+        vir::ast::ExprX::Const(c) => ExprX::Const(c.clone()),
+        vir::ast::ExprX::Var(v) => ExprX::Var(varident(v)),
+        vir::ast::ExprX::VarLoc(_) => ExprX::Unsupported(v),
+        vir::ast::ExprX::VarAt(_,_) => ExprX::Unsupported(v),
+        vir::ast::ExprX::ConstVar(_, _) => ExprX::Unsupported(v),
+        vir::ast::ExprX::StaticVar(_) => ExprX::Unsupported(v),
+        vir::ast::ExprX::Loc(_) => ExprX::Unsupported(v),
+        vir::ast::ExprX::Call(a,b) => ExprX::Call(a.clone(),b.into()),
+        vir::ast::ExprX::Tuple(_) => ExprX::Unsupported(v),
         vir::ast::ExprX::Ctor(a,b,c,d) =>
             ExprX::Ctor(a.clone(),b.clone(),
                 c.into(),
@@ -307,7 +183,7 @@ impl From<vir::ast::ExprX> for ExprX {
             ExprX::Quant(a.clone(),b.into(),c.into()),
         vir::ast::ExprX::Closure(a,b) =>
             ExprX::Closure(a.into(),b.into()),
-        vir::ast::ExprX::ExecClosure { params, body, requires, ensures, ret, external_spec } =>
+        vir::ast::ExprX::ExecClosure { params, body, requires, ensures, ret, external_spec: _ } =>
             ExprX::ExecClosure {
                 params: params.into(),
                 body: body.into(),
@@ -325,12 +201,8 @@ impl From<vir::ast::ExprX> for ExprX {
                 body: body.into() },
         vir::ast::ExprX::WithTriggers { triggers: _, body } =>
             <vir::ast::ExprX as Clone>::clone(&body.x).into(),
-        vir::ast::ExprX::Assign { init_not_mut, lhs, rhs, op } =>
-            ExprX::Assign {
-                init_not_mut,
-                lhs: lhs.into(),
-                rhs: rhs.into(),
-                op: op.clone() },
+        vir::ast::ExprX::Assign { init_not_mut: _, lhs: _, rhs: _, op: _ } =>
+            ExprX::Unsupported(v),
         vir::ast::ExprX::Fuel(a,b,c) =>
             ExprX::Unsupported(vir::ast::ExprX::Fuel(a,b,c)),
         vir::ast::ExprX::RevealString(a) =>
@@ -367,6 +239,21 @@ impl From<vir::ast::ExprX> for ExprX {
     }
 }
 
+impl From<vir::ast::Param> for Binder<Typ> {
+    fn from(p: vir::ast::Param) -> Self {
+        Binder( Arc::new( BinderX{
+            name: varident(p.as_ref().clone().x.name),
+            a: p.as_ref().clone().x.typ,
+        }))
+    }
+}
+
+impl From<vir::ast::Params> for Binders<Typ> {
+    fn from(p: vir::ast::Params) -> Self {
+        Binders(Arc::new(p.as_ref().clone().into_iter().map(|p| p.into()).collect()))
+    }
+}
+
 #[derive(Serialize,Deserialize)]
 pub struct Function {
     /// Name of function
@@ -380,10 +267,10 @@ pub struct Function {
     // pub visibility: Visibility,
     // /// Owning module
     // pub owning_module: Option<Path>,
-    /// exec functions are compiled, proof/spec are erased
-    /// exec/proof functions can have requires/ensures, spec cannot
-    /// spec functions can be used in requires/ensures, proof/exec cannot
-    pub mode: Mode,
+    // /// exec functions are compiled, proof/spec are erased
+    // /// exec/proof functions can have requires/ensures, spec cannot
+    // /// spec functions can be used in requires/ensures, proof/exec cannot
+    // pub mode: Mode,
     // /// Default amount of fuel: 0 means opaque, >= 1 means visible
     // /// For recursive functions, fuel determines the number of unfoldings that the SMT solver sees
     // pub fuel: u32,
@@ -393,9 +280,9 @@ pub struct Function {
     // /// Type bounds of generic functions
     // pub typ_bounds: GenericBounds,
     /// Function parameters
-    pub params: Params,
+    pub params: Binders<Typ>,
     /// Return value (unit return type is treated specially; see FunctionX::has_return in ast_util)
-    pub ret: Param,
+    pub ret: Binder<Typ>,
     /// Preconditions (requires for proof/exec functions, recommends for spec functions)
     pub require: Exprs,
     /// Postconditions (proof/exec functions only)
@@ -439,9 +326,8 @@ impl From<vir::ast::Function> for Function {
     fn from(v: vir::ast::Function) -> Function {
         Function {
             name: v.x.name.clone(),
-            mode: v.x.mode.clone(),
             typ_params: v.x.typ_params.clone(),
-            params: (v.x.params.clone()).into(),
+            params: v.x.params.clone().into(),
             ret: v.x.ret.clone().into(),
             require: v.x.require.clone().into(),
             ensure: v.x.ensure.clone().into(),

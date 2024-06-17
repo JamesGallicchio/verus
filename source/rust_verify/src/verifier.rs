@@ -1988,12 +1988,14 @@ impl Verifier {
             for node in nodes.iter() {
                 match node {
                     vir::recursion::Node::Fun(f) => {
-                        println!("processing fn: {:?}", f.path);
-                        for f in krate.functions.iter()
-                                .find(|f2| (*f2.x.name.path) == (*f.path))
-                                .iter() {
-                            if f.x.mode == Mode::Proof {
-                                fns.push((**f).clone().into());
+                        if f.path.segments.first().is_some_and(|s| (**s) == "arithmetic") {
+                            println!("processing fn: {:?}", f.path);
+                            for f in krate.functions.iter()
+                                    .find(|f2| (*f2.x.name.path) == (*f.path))
+                                    .iter() {
+                                if f.x.mode == Mode::Proof {
+                                    fns.push((**f).clone().into());
+                                }
                             }
                         }
                     }

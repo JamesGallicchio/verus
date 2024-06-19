@@ -7,8 +7,7 @@
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use vir::ast::{
-    BinaryOp, BinaryOpr, CallTarget, Constant, Fun, Ident, Idents, MultiOp,
-    NullaryOpr, Path, Quant, Typ, UnaryOp, UnaryOpr
+    BinaryOp, BinaryOpr, CallTarget, Fun, Ident, Idents, IntRange, MultiOp, NullaryOpr, Path, Primitive, Quant, UnaryOp, UnaryOpr
 };
 
 fn varident(v: vir::ast::VarIdent) -> Ident {
@@ -72,6 +71,121 @@ impl<T0: Clone, T: From<T0> + Clone> From<vir::ast::VarBinderX<T0>> for BinderX<
     }
 }
 
+#[derive(Debug, Serialize, Deserialize, Hash, Clone)]
+pub struct Typ(Arc<TypX>);
+#[derive(Debug, Serialize, Deserialize, Hash)]
+pub struct Typs(Arc<Vec<Typ>>);
+// Because of ImplPaths in TypX::Datatype, TypX should not implement PartialEq, Eq
+// See ast_util::types_equal instead
+#[derive(Debug, Serialize, Deserialize, Hash)]
+pub enum TypX {
+    /// Bool, Int, Datatype are translated directly into corresponding SMT types (they are not SMT-boxed)
+    Bool,
+    Int { _0: IntRange },
+    /// UTF-8 character type
+    Char,
+    /// Tuple type (t1, ..., tn).  Note: ast_simplify replaces Tuple with Datatype.
+    Tuple { _0: Typs },
+    /// `FnSpec` type (TODO rename from 'Lambda' to just 'FnSpec')
+    /// (t1, ..., tn) -> t0.
+    Lambda(Typs, Typ),
+    /// Executable function types (with a requires and ensures)
+    AnonymousClosure(Typs, Typ, usize),
+    /// Corresponds to Rust's FnDef type
+    /// Typs are generic type args
+    /// If Fun is a trait function, then the Option<Fun> has the statically resolved
+    /// function if it exists. Similar to ImplPaths, this is technically redundant
+    /// (because it follows from the types), but it is not easy to compute without
+    /// storing it here. We need it because it is useful for determining which
+    /// FnDef axioms to introduce.
+    FnDef(Fun, Typs, Option<Fun>),
+    /// Datatype (concrete or abstract) applied to type arguments
+    Datatype(Path, Typs),
+    /// StrSlice type. Currently the vstd StrSlice struct is "seen" as this type
+    /// despite the fact that it is in fact a datatype
+    StrSlice,
+    /// Other primitive type (applied to type arguments)
+    Primitive(Primitive, Typs),
+    /// Type parameter (inherently SMT-boxed, and cannot be unboxed)
+    TypParam { _0: Ident },
+    /// Projection such as <D as T<S>>::X or <A as T>::X (SMT-boxed, and can sometimes be unboxed)
+    Projection {
+        // trait_typ_args[0] is Self type
+        trait_typ_args: Typs,
+        trait_path: Path,
+        name: Ident,
+    },
+    /// Type of type identifiers
+    TypeId,
+    /// Const integer type argument (e.g. for array sizes)
+    ConstInt { _0: num_bigint::BigInt },
+    /// AIR type, used internally during translation
+    Unsupported {
+        _0: vir::ast::Typ
+    },
+}
+
+impl From<vir::ast::Typs> for Typs {
+    fn from(v: vir::ast::Typs) -> Self {
+        Typs(Arc::new(v.as_ref().clone().into_iter().map(|x| x.into()).collect()))
+    }
+}
+
+impl From<vir::ast::Typ> for Typ {
+    fn from(value: vir::ast::Typ) -> Self {
+        match value.as_ref() {
+            vir::ast::TypX::Bool => Typ(Arc::new(TypX::Bool)),
+            vir::ast::TypX::Int(r) => Typ(Arc::new(TypX::Int {_0: *r})),
+            vir::ast::TypX::Char => Typ(Arc::new(TypX::Char)),
+            vir::ast::TypX::Tuple(ts) => Typ(Arc::new(TypX::Tuple {_0: ts.clone().into()})),
+            vir::ast::TypX::Lambda(t1, t2) => Typ(Arc::new(TypX::Lambda(t1.clone().into(), t2.clone().into()))),
+            vir::ast::TypX::Datatype(a,b,_) => Typ(Arc::new(TypX::Datatype(a.clone(),b.clone().into()))),
+            vir::ast::TypX::AnonymousClosure(_, _, _) |
+            vir::ast::TypX::FnDef(_, _, _) |
+            vir::ast::TypX::StrSlice |
+            vir::ast::TypX::Primitive(_, _) |
+            vir::ast::TypX::Decorate(_, _) |
+            vir::ast::TypX::Boxed(_) |
+            vir::ast::TypX::TypParam(_) |
+            vir::ast::TypX::Projection { trait_typ_args: _, trait_path: _, name: _ } |
+            vir::ast::TypX::TypeId |
+            vir::ast::TypX::ConstInt(_) |
+            vir::ast::TypX::Air(_) => Typ(Arc::new(TypX::Unsupported {_0: value})),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub enum Constant {
+    /// true or false
+    Bool { _0: bool },
+    /// integer of arbitrary size
+    Int {
+        #[serde(serialize_with = "bigint_serial")]
+        _0: num_bigint::BigInt
+    },
+    /// Hold generated string slices in here
+    StrSlice { _0: Arc<String> },
+    // Hold unicode values here
+    Char { _0: char },
+}
+
+fn bigint_serial<S: serde::Serializer>(a: &num_bigint::BigInt, b: S) -> Result<S::Ok,S::Error> {
+    b.serialize_str(&a.to_string())
+}
+
+impl From<vir::ast::Constant> for Constant {
+    fn from(v: vir::ast::Constant) -> Self {
+        match v {
+            vir::ast::Constant::Bool(b) => Constant::Bool { _0: b },
+            vir::ast::Constant::Int(i) => Constant::Int {_0: i},
+            vir::ast::Constant::StrSlice(s) => Constant::StrSlice {_0: s},
+            vir::ast::Constant::Char(c) => Constant::Char {_0: c},
+        }
+    }
+}
+
+
 #[derive(Clone,Debug,Serialize,Deserialize)]
 pub struct Expr(Arc<ExprX>);
 #[derive(Clone,Debug,Serialize,Deserialize)]
@@ -80,9 +194,13 @@ pub struct Exprs(Arc<Vec<Expr>>);
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum ExprX {
     /// Constant
-    Const(Constant),
+    Const {
+        _0: Constant
+    },
     /// Local variable as a right-hand side
-    Var(Ident),
+    Var {
+        _0: Ident
+    },
     /// Call to a function passing some expression arguments
     Call(CallTarget, Exprs),
     /// Construct datatype value of type Path and variant Ident,
@@ -91,7 +209,9 @@ pub enum ExprX {
     /// Fields can appear **in any order** even for tuple variants.
     Ctor(Path, Ident, Binders<Expr>, Option<Expr>),
     /// Primitive 0-argument operation
-    NullaryOpr(NullaryOpr),
+    NullaryOpr {
+        _0: NullaryOpr
+    },
     /// Primitive unary operation
     Unary(UnaryOp, Expr),
     /// Special unary operator
@@ -115,9 +235,13 @@ pub enum ExprX {
         ret: Binder<Typ>,
     },
     /// Array literal (can also be used for sequence literals in the future)
-    ArrayLiteral(Exprs),
+    ArrayLiteral {
+        _0: Exprs
+    },
     /// Executable function (declared with 'fn' and referred to by name)
-    ExecFnByName(Fun),
+    ExecFnByName {
+        _0: Fun
+    },
     /// Choose specification values satisfying a condition, compute body
     Choose { params: Binders<Typ>, cond: Expr, body: Expr },
     // /// Assign to local variable
@@ -135,8 +259,11 @@ pub enum ExprX {
     If(Expr, Expr, Option<Expr>),
     // /// Sequence of statements, optionally including an expression at the end
     // Block(Stmts, Option<Expr>),
-    Unsupported(vir::ast::ExprX),
+    Unsupported {
+        _0: vir::ast::ExprX
+    },
 }
+
 
 impl From<vir::ast::Expr> for Expr {
     fn from(v: Arc<vir::ast::SpannedTyped<vir::ast::ExprX>>) -> Self {
@@ -153,22 +280,22 @@ impl From<vir::ast::Exprs> for Exprs {
 impl From<vir::ast::ExprX> for ExprX {
     fn from(v: vir::ast::ExprX) -> ExprX {
         match v {
-        vir::ast::ExprX::Const(c) => ExprX::Const(c.clone()),
-        vir::ast::ExprX::Var(v) => ExprX::Var(varident(v)),
-        vir::ast::ExprX::VarLoc(_) => ExprX::Unsupported(v),
-        vir::ast::ExprX::VarAt(_,_) => ExprX::Unsupported(v),
-        vir::ast::ExprX::ConstVar(_, _) => ExprX::Unsupported(v),
-        vir::ast::ExprX::StaticVar(_) => ExprX::Unsupported(v),
-        vir::ast::ExprX::Loc(_) => ExprX::Unsupported(v),
+        vir::ast::ExprX::Const(c) => ExprX::Const { _0: c.into() },
+        vir::ast::ExprX::Var(v) => ExprX::Var { _0: varident(v) },
+        vir::ast::ExprX::VarLoc(_) => ExprX::Unsupported { _0: v },
+        vir::ast::ExprX::VarAt(_,_) => ExprX::Unsupported { _0: v },
+        vir::ast::ExprX::ConstVar(_, _) => ExprX::Unsupported { _0: v },
+        vir::ast::ExprX::StaticVar(_) => ExprX::Unsupported { _0: v },
+        vir::ast::ExprX::Loc(_) => ExprX::Unsupported { _0: v },
         vir::ast::ExprX::Call(a,b) => ExprX::Call(a.clone(),b.into()),
-        vir::ast::ExprX::Tuple(_) => ExprX::Unsupported(v),
+        vir::ast::ExprX::Tuple(_) => ExprX::Unsupported { _0: v },
         vir::ast::ExprX::Ctor(a,b,c,d) =>
             ExprX::Ctor(a.clone(),b.clone(),
                 c.into(),
                 d.map(|d| d.into())
             ),
         vir::ast::ExprX::NullaryOpr(a) =>
-            ExprX::NullaryOpr(a.clone()),
+            ExprX::NullaryOpr { _0: a.clone() },
         vir::ast::ExprX::Unary(a,b) =>
             ExprX::Unary(a.clone(),b.into()),
         vir::ast::ExprX::UnaryOpr(a,b) =>
@@ -191,9 +318,9 @@ impl From<vir::ast::ExprX> for ExprX {
                 ensures: ensures.into(),
                 ret: ret.into() },
         vir::ast::ExprX::ArrayLiteral(a) =>
-            ExprX::ArrayLiteral(a.into()),
+            ExprX::ArrayLiteral { _0: a.into() },
         vir::ast::ExprX::ExecFnByName(b) =>
-            ExprX::ExecFnByName(b.clone()),
+            ExprX::ExecFnByName { _0: b.clone() },
         vir::ast::ExprX::Choose { params, cond, body } =>
             ExprX::Choose {
                 params: params.into(),
@@ -202,39 +329,39 @@ impl From<vir::ast::ExprX> for ExprX {
         vir::ast::ExprX::WithTriggers { triggers: _, body } =>
             <vir::ast::ExprX as Clone>::clone(&body.x).into(),
         vir::ast::ExprX::Assign { init_not_mut: _, lhs: _, rhs: _, op: _ } =>
-            ExprX::Unsupported(v),
+            ExprX::Unsupported { _0: v },
         vir::ast::ExprX::Fuel(a,b,c) =>
-            ExprX::Unsupported(vir::ast::ExprX::Fuel(a,b,c)),
+            ExprX::Unsupported { _0: vir::ast::ExprX::Fuel(a,b,c) },
         vir::ast::ExprX::RevealString(a) =>
-            ExprX::Unsupported(vir::ast::ExprX::RevealString(a)),
+            ExprX::Unsupported { _0: vir::ast::ExprX::RevealString(a) },
         vir::ast::ExprX::Header(_) =>
-            ExprX::Unsupported(v),
+            ExprX::Unsupported { _0: v },
         vir::ast::ExprX::AssertAssume { is_assume: _, expr: _ } =>
-            ExprX::Unsupported(v),
+            ExprX::Unsupported { _0: v },
         vir::ast::ExprX::AssertBy { vars: _, require: _, ensure: _, proof: _ } =>
-            ExprX::Unsupported(v),
+            ExprX::Unsupported { _0: v },
         vir::ast::ExprX::AssertQuery { requires: _, ensures: _, proof: _, mode: _ } =>
-            ExprX::Unsupported(v),
+            ExprX::Unsupported { _0: v },
         vir::ast::ExprX::AssertCompute(_, _) =>
-            ExprX::Unsupported(v),
+            ExprX::Unsupported { _0: v },
         vir::ast::ExprX::If(a, b,c) =>
             ExprX::If(a.into(), b.into(), c.map(|c| c.into())),
         vir::ast::ExprX::Match(_, _) =>
-            ExprX::Unsupported(v),
+            ExprX::Unsupported { _0: v },
         vir::ast::ExprX::Loop { loop_isolation: _, is_for_loop: _, label: _, cond: _, body: _, invs: _, decrease: _ } =>
-            ExprX::Unsupported(v),
+            ExprX::Unsupported { _0: v },
         vir::ast::ExprX::OpenInvariant(_,_,_,_) =>
-            ExprX::Unsupported(v),
+            ExprX::Unsupported { _0: v },
         vir::ast::ExprX::Return(_) =>
-            ExprX::Unsupported(v),
+            ExprX::Unsupported { _0: v },
         vir::ast::ExprX::BreakOrContinue { label: _, is_break: _ } =>
-            ExprX::Unsupported(v),
+            ExprX::Unsupported { _0: v },
         vir::ast::ExprX::Ghost { alloc_wrapper: _, tracked: _, expr: _ } =>
-            ExprX::Unsupported(v),
+            ExprX::Unsupported { _0: v },
         vir::ast::ExprX::Block(_,_) =>
-            ExprX::Unsupported(v),
+            ExprX::Unsupported { _0: v },
         vir::ast::ExprX::AirStmt(_) =>
-            ExprX::Unsupported(v),
+            ExprX::Unsupported { _0: v },
         }
     }
 }
@@ -243,7 +370,7 @@ impl From<vir::ast::Param> for Binder<Typ> {
     fn from(p: vir::ast::Param) -> Self {
         Binder( Arc::new( BinderX{
             name: varident(p.as_ref().clone().x.name),
-            a: p.as_ref().clone().x.typ,
+            a: p.as_ref().clone().x.typ.into(),
         }))
     }
 }

@@ -16,10 +16,11 @@ use rustc_hir::OwnerNode;
 use rustc_interface::interface::Compiler;
 use rustc_session::config::ErrorOutputType;
 
+use std::convert::TryInto;
 use std::fs::OpenOptions;
 
 use vir::messages::{
-    message, note, note_bare, warning_bare, Message, MessageLabel, MessageLevel, MessageX, ToAny,
+    message, message_bare, note, note_bare, warning_bare, Message, MessageLabel, MessageLevel, MessageX, ToAny
 };
 
 use num_format::{Locale, ToFormattedString};
@@ -37,7 +38,7 @@ use vir::context::{FuncCallGraphLogFiles, GlobalCtx};
 
 use crate::buckets::{Bucket, BucketId};
 use crate::expand_errors_driver::ExpandErrorsResult;
-use vir::ast::{ArithOp, CallTargetKind, Expr, ExprX, Fun, FunX, Function, InequalityOp, Krate, Mode, Param, Path, PathX, Stmt, Typ, TypX, VarIdent, VirErr};
+use vir::ast::{Fun, Krate, Mode, VirErr};
 use vir::ast_util::{fun_as_friendly_rust_name, is_visible_to};
 use vir::def::{
     path_to_string, CommandContext, CommandsWithContext, CommandsWithContextX, SnapPos,
@@ -1994,7 +1995,10 @@ impl Verifier {
                                     .find(|f2| (*f2.x.name.path) == (*f.path))
                                     .iter() {
                                 if f.x.mode == Mode::Proof {
-                                    fns.push((**f).clone().into());
+                                    let f: vir::ast::Function = (*f).clone();
+                                    fns.push(f.try_into().map_err(|s|
+                                        message_bare(MessageLevel::Error, s)
+                                    )?);
                                 }
                             }
                         }

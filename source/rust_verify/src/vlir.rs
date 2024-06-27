@@ -405,20 +405,9 @@ fn param(p: vir::ast::Param) -> Result<Binder<Typ>,<Typ as TryFrom<vir::ast::Typ
 
 fn params(p: vir::ast::Params) -> Result<Binders<Typ>,<Typ as TryFrom<vir::ast::Typ>>::Error> {
     Ok(Arc::new(
-        if params_are_noparam(p.clone()) {
-            Vec::new()
-        } else {
-            p.as_ref().clone().into_iter().map(|p| param(p))
-                .collect::<Result<Vec<_>,_>>()?
-        }
+        p.as_ref().clone().into_iter().map(|p| param(p))
+            .collect::<Result<Vec<_>,_>>()?
     ))
-}
-
-fn params_are_noparam(p: vir::ast::Params) -> bool {
-    match p.as_slice() {
-        [b] if *b.x.name.0 == "no%param" => true,
-        _ => false
-    }
 }
 
 #[derive(Serialize,Deserialize)]

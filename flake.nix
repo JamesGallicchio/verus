@@ -10,9 +10,7 @@
 
     flake-utils.lib.eachDefaultSystem(system:
       let
-      	pkgs     = nixpkgs.legacyPackages.${system};
-      	pkgs_x86 = nixpkgs.legacyPackages.x86_64-linux;
-      	pkgs_arm = nixpkgs.legacyPackages.aarch64-linux;
+      	pkgs     = import nixpkgs { system = "x86_64-linux"; config.allowUnfree = true; };
       	version  = "0.0.1";
       	src      = self;
       in rec {      
@@ -20,14 +18,19 @@
           shellHook = ''
             SHELL=${pkgs.bashInteractive}/bin/bash
             VERUS_Z3_PATH=$(whereis z3 | awk '{print $2}')
-            source tools/activate
-            code .
           '';
           buildInputs = [
             pkgs.bashInteractive
           ];
           nativeBuildInputs = with pkgs; [
             rustup
+            (vscode-with-extensions.override {
+              vscodeExtensions = with pkgs.vscode-extensions; [
+                rust-lang.rust-analyzer
+              ];
+            })
+
+
             tokei
       
             llvmPackages_14.libcxxStdenv

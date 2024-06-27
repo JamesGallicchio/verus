@@ -4,6 +4,7 @@
 //!
 //! Right now this is just used to control how Serde serializes it
 
+use rustc_middle::ty::layout::MaybeResult;
 use serde::{Deserialize, Serialize};
 use std::{convert::{TryFrom, TryInto}, sync::Arc};
 use air::ast::Quant;
@@ -283,7 +284,7 @@ pub enum ExprX {
     /// Primitive multi-operand operation
     Multi(MultiOp, Exprs),
     /// If-else
-    If(Expr, Expr, Option<Expr>),
+    If(Expr, Expr, Expr),
     /// Let binding
     Let(Binder<Expr>, Expr),
     /// Quantifier (forall/exists), binding the variables in Binders, with body Expr
@@ -364,11 +365,11 @@ impl TryFrom<&vir::ast::ExprX> for ExprX {
                 params: varbinders(params)?,
                 cond: cond.clone().try_into()?,
                 body: body.clone().try_into()? },
-        vir::ast::ExprX::If(a, b, c) =>
+        vir::ast::ExprX::If(a, b, Some(c)) =>
             ExprX::If(
                 a.clone().try_into()?,
                 b.clone().try_into()?,
-                c.as_ref().map(|c| c.clone().try_into()).transpose()?),
+                c.clone().try_into()?),
         vir::ast::ExprX::Block(ss,e) => {
             let res: &vir::ast::Expr = e.as_ref().ok_or(format!("Unsupported expr: block with no return expression: {:?}", v))?;
             let last: ExprX = (&res.x).try_into()?;
@@ -407,28 +408,35 @@ fn param(p: vir::ast::Param) -> Result<Binder<Typ>,<Typ as TryFrom<vir::ast::Typ
 
 fn params(p: vir::ast::Params) -> Result<Binders<Typ>,<Typ as TryFrom<vir::ast::Typ>>::Error> {
     Ok(Arc::new(
-        p.as_ref().clone().into_iter().map(|p| param(p))
-            .collect::<Result<Vec<_>,_>>()?
+        if params_are_noparam(p.clone()) {
+            Vec::new()
+        } else {
+            p.as_ref().clone().into_iter().map(|p| param(p))
+                .collect::<Result<Vec<_>,_>>()?
+        }
     ))
 }
 
+fn params_are_noparam(p: vir::ast::Params) -> bool {
+    match p.as_slice() {
+        [b] if *b.x.name.0 == "no%param" => true,
+        _ => false
+    }
+}
+
 #[derive(Serialize,Deserialize)]
-pub struct Function {
+pub struct Defn {
     /// Name of function
     pub name: Path,
     /// Type parameters to generic functions
     /// (for trait methods, the trait parameters come first, then the method parameters)
     pub typ_params: Idents,
-    // /// Type bounds of generic functions
-    // pub typ_bounds: GenericBounds,
     /// Function parameters
     pub params: Binders<Typ>,
     /// Return value (unit return type is treated specially; see FunctionX::has_return in ast_util)
     pub ret: Binder<Typ>,
-    /// Preconditions (requires for proof/exec functions, recommends for spec functions)
-    pub require: Exprs,
-    /// Postconditions (proof/exec functions only)
-    pub ensure: Exprs,
+    /// Body of the function
+    pub body: Expr,
     /// Decreases clause to ensure recursive function termination
     /// decrease.len() == 0 means no decreases clause
     /// decrease.len() >= 1 means list of expressions, interpreted in lexicographic order
@@ -439,18 +447,56 @@ pub struct Function {
     pub decrease_when: Option<Expr>,
 }
 
-impl TryFrom<vir::ast::Function> for Function {
+#[derive(Serialize,Deserialize)]
+pub struct Theorem {
+    /// Name of function
+    pub name: Path,
+    /// Type parameters to generic functions
+    /// (for trait methods, the trait parameters come first, then the method parameters)
+    pub typ_params: Idents,
+    /// Function parameters
+    pub params: Binders<Typ>,
+    /// Preconditions (requires for proof/exec functions, recommends for spec functions)
+    pub require: Exprs,
+    /// Postconditions (proof/exec functions only)
+    pub ensure: Exprs,
+}
+
+#[derive(Serialize,Deserialize)]
+pub enum Decl {
+    Defn(Defn),
+    Theorem(Theorem),
+}
+
+impl TryFrom<vir::ast::Function> for Decl {
     type Error = String;
     fn try_from(v: vir::ast::Function) -> Result<Self,Self::Error> {
-        Ok(Function {
-            name: v.x.name.path.clone(),
-            typ_params: v.x.typ_params.clone(),
-            params: params(v.x.params.clone())?,
-            ret: param(v.x.ret.clone())?,
-            require: v.x.require.clone().try_into()?,
-            ensure: v.x.ensure.clone().try_into()?,
-            decrease: v.x.decrease.clone().try_into()?,
-            decrease_when: v.x.decrease_when.clone().map(|e| e.try_into()).transpose()?,
-        })
+        let ps = params(v.x.params.clone())?;
+        match v.x.mode {
+            vir::ast::Mode::Spec => {
+                Ok(Decl::Defn(Defn {
+                    name: v.x.name.path.clone(),
+                    typ_params: v.x.typ_params.clone(),
+                    params: ps,
+                    ret: param(v.x.ret.clone())?,
+                    body: v.x.body.clone().ok_or(format!("Spec function with no body"))?
+                            .try_into()?,
+                    decrease: v.x.decrease.clone().try_into()?,
+                    decrease_when: v.x.decrease_when.clone().map(|e| e.try_into()).transpose()?,
+                }))
+            }
+            vir::ast::Mode::Proof => {
+                Ok(Decl::Theorem(Theorem {
+                    name: v.x.name.path.clone(),
+                    typ_params: v.x.typ_params.clone(),
+                    params: ps,
+                    require: v.x.require.clone().try_into()?,
+                    ensure: v.x.ensure.clone().try_into()?,
+                }))
+            }
+            vir::ast::Mode::Exec => {
+                Err(format!("Exec mode functions are not supported: {:?}", v.x.name))
+            }
+        }
     }
 }

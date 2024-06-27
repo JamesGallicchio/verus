@@ -1982,7 +1982,7 @@ impl Verifier {
 
         println!("Crate {} has {} functions", crate_name, krate.functions.len());
 
-        let mut fns: Vec<vlir::Function> = Vec::new();
+        let mut fns: Vec<vlir::Decl> = Vec::new();
 
         for scc in global_ctx.func_call_sccs.iter() {
             let nodes = global_ctx.func_call_graph.get_scc_nodes(scc);
@@ -1994,12 +1994,10 @@ impl Verifier {
                             for f in krate.functions.iter()
                                     .find(|f2| (*f2.x.name.path) == (*f.path))
                                     .iter() {
-                                if f.x.mode == Mode::Proof {
-                                    let f: vir::ast::Function = (*f).clone();
-                                    fns.push(f.try_into().map_err(|s|
-                                        message_bare(MessageLevel::Error, s)
-                                    )?);
-                                }
+                                let f: vir::ast::Function = (*f).clone();
+                                fns.push(f.try_into().map_err(|s|
+                                    message_bare(MessageLevel::Error, s)
+                                )?);
                             }
                         }
                     }

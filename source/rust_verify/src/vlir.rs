@@ -4,7 +4,6 @@
 //!
 //! Right now this is just used to control how Serde serializes it
 
-use rustc_middle::ty::layout::MaybeResult;
 use serde::{Deserialize, Serialize};
 use std::{convert::{TryFrom, TryInto}, sync::Arc};
 use air::ast::Quant;
@@ -91,8 +90,7 @@ impl TryFrom<&vir::ast::TypX> for TypX {
         Ok(match v {
             vir::ast::TypX::Bool => TypX::Bool,
             vir::ast::TypX::Int(r) => TypX::Int(*r),
-            vir::ast::TypX::Char => TypX::Char,
-            vir::ast::TypX::Lambda(t1, t2) => {
+            vir::ast::TypX::SpecFn(t1, t2) => {
                 TypX::Lambda(t1.clone().try_into()?, t2.clone().try_into()?)
             }
             vir::ast::TypX::Datatype(a,b,_) => {
@@ -178,7 +176,6 @@ impl TryFrom<&vir::ast::UnaryOp> for UnaryOp {
             vir::ast::UnaryOp::StrLen |
             vir::ast::UnaryOp::HeightTrigger |
             vir::ast::UnaryOp::StrIsAscii |
-            vir::ast::UnaryOp::CharToInt |
             vir::ast::UnaryOp::InferSpecForLoopIter { print_hint:_ } |
             vir::ast::UnaryOp::CastToInteger =>
                 return Err(format!("Unsupported UnaryOp: {:?}", v)),

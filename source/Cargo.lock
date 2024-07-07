@@ -2094,6 +2094,7 @@ dependencies = [
  "num-bigint 0.4.4",
  "num-traits",
  "serde",
+ "serde_json",
  "sha2",
  "sise",
  "vir-macros",

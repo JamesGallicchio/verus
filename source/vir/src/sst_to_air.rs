@@ -42,6 +42,7 @@ use air::ast_util::{
 use air::context::SmtSolver;
 use num_bigint::BigInt;
 use std::collections::{BTreeMap, HashSet};
+use std::convert::TryInto;
 use std::mem::swap;
 use std::sync::Arc;
 
@@ -2718,6 +2719,7 @@ pub(crate) fn body_stm_to_air(
     }
 
     if is_integer_ring {
+        /* 
         #[cfg(feature = "singular")]
         {
             // parameters, requires, ensures to Singular Query
@@ -2739,42 +2741,27 @@ pub(crate) fn body_stm_to_air(
                 let air_expr = exp_to_expr(ctx, req, &ExprCtxt::new_mode(ExprMode::BodyPre))?;
                 let assert_stm = Arc::new(StmtX::Assert(None, error, None, air_expr));
                 singular_req_stmts.push(assert_stm);
-            }
+            } */
+        if is_bit_vector_mode {
+            panic! {"Error: integer_ring and bit_vector should not be used together"}
+        };
+        let f: crate::vlir::Theorem = crate::vlir::Theorem {
+            name: ctx.fun.as_ref().map(|x| x.current_fun.path.clone())
+                    .expect("singular call not in function context"),
+            typ_params: typ_params.clone(),
+            params: crate::vlir::params(params.clone()).map_err(crate::messages::error_bare)?,
+            require: reqs.clone().try_into().map_err(crate::messages::error_bare)?,
+            ensure: Arc::new(post_condition.ens_exps.clone()).try_into().map_err(crate::messages::error_bare)?,
+        };
+        let path = std::env::current_dir().unwrap().join(format!("{}.json", ctx.global.crate_name.clone()));
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .open(path)
+            .unwrap();
 
-            let mut singular_ens_stmts: Vec<Stmt> = vec![];
-            for ens in post_condition.ens_exps.iter() {
-                let error = error_with_label(
-                    &ens.span,
-                    "Unspported expression in integer_ring".to_string(),
-                    "at the ensure clause".to_string(),
-                );
-                let air_expr = exp_to_expr(ctx, ens, &ExprCtxt::new_mode(ExprMode::BodyPre))?;
-                let assert_stm = Arc::new(StmtX::Assert(None, error, None, air_expr));
-                singular_ens_stmts.push(assert_stm);
-            }
-
-            // put requires and ensures in the singular query
-            let query = Arc::new(air::ast::SingularQueryX {
-                local: Arc::new(singular_vars),
-                requires: Arc::new(singular_req_stmts),
-                ensures: Arc::new(singular_ens_stmts),
-            });
-
-            let singular_command = Arc::new(CommandX::CheckSingular(query));
-
-            state.commands.push(CommandsWithContextX::new(
-                ctx.fun
-                    .as_ref()
-                    .expect("asserts are expected to be in a function")
-                    .current_fun
-                    .clone(),
-                func_span.clone(),
-                "Singular check valid".to_string(),
-                Arc::new(vec![singular_command]),
-                ProverChoice::Singular,
-                true,
-            ));
-        }
+        let _ = serde_json::to_writer(file, &f);
     } else {
         let query = Arc::new(QueryX { local: Arc::new(local), assertion });
         let commands = if is_nonlinear {

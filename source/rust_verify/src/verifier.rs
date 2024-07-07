@@ -45,8 +45,6 @@ use vir::def::{
 };
 use vir::prelude::PreludeConfig;
 
-use crate::vlir;
-
 const RLIMIT_PER_SECOND: f32 = 3000000f32;
 
 #[derive(Clone, Hash, PartialEq, Eq)]
@@ -1979,42 +1977,6 @@ impl Verifier {
         )?;
         vir::recursive_types::check_traits(&krate, &global_ctx)?;
         let krate = vir::ast_simplify::simplify_krate(&mut global_ctx, &krate)?;
-
-        println!("Crate {} has {} functions", crate_name, krate.functions.len());
-
-        let mut fns: Vec<vlir::Decl> = Vec::new();
-
-        for scc in global_ctx.func_call_sccs.iter() {
-            let nodes = global_ctx.func_call_graph.get_scc_nodes(scc);
-            for node in nodes.iter() {
-                match node {
-                    vir::recursion::Node::Fun(f) => {
-                        if f.path.segments.first().is_some_and(|s| (**s) == "arithmetic") {
-                            println!("processing fn: {:?}", f.path);
-                            for f in krate.functions.iter()
-                                    .find(|f2| (*f2.x.name.path) == (*f.path))
-                                    .iter() {
-                                let f: vir::ast::Function = (*f).clone();
-                                fns.push(f.try_into().map_err(|s|
-                                    message_bare(MessageLevel::Error, s)
-                                )?);
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-
-        let path = std::env::current_dir().unwrap().join(crate_name.clone() + ".json");
-        let file = OpenOptions::new()
-            .create(true)
-            .truncate(true)
-            .write(true)
-            .open(path)
-            .unwrap();
-
-        let _ = serde_json::to_writer(file, &fns);
 
 
         if self.args.log_all || self.args.log_args.log_vir_simple {

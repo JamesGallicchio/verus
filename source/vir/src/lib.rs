@@ -71,3 +71,4 @@ pub mod update_cell;
 pub mod util;
 mod visitor;
 pub mod well_formed;
+pub mod vlir;

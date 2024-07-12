@@ -17,7 +17,6 @@
         devShell = pkgs.mkShell {
           shellHook = ''
             SHELL=${pkgs.bashInteractive}/bin/bash
-            VERUS_Z3_PATH=$(whereis z3 | awk '{print $2}')
           '';
           buildInputs = [
             pkgs.bashInteractive
@@ -40,6 +39,7 @@
             gnumake
 
             z3_4_12
+            singular
           ];
         };
       }

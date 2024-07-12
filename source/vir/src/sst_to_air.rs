@@ -2746,15 +2746,27 @@ pub(crate) fn body_stm_to_air(
         if is_bit_vector_mode {
             panic! {"Error: integer_ring and bit_vector should not be used together"}
         };
+        let path = ctx.fun.as_ref().map(|x| x.current_fun.path.clone()).expect("singular call not in function context");
+        let path: PathX = (*path.as_ref()).clone();
+        let path = PathX {
+            krate: path.krate,
+            segments: {
+                let mut orig = (*path.segments.as_ref()).clone();
+                orig.push(rand::random::<u16>().to_string().into());
+                orig.into()
+            },
+        };
         let f: crate::vlir::Theorem = crate::vlir::Theorem {
-            name: ctx.fun.as_ref().map(|x| x.current_fun.path.clone())
-                    .expect("singular call not in function context"),
+            name: path.clone().into(),
             typ_params: typ_params.clone(),
             params: crate::vlir::params(params.clone()).map_err(crate::messages::error_bare)?,
             require: reqs.clone().try_into().map_err(crate::messages::error_bare)?,
             ensure: Arc::new(post_condition.ens_exps.clone()).try_into().map_err(crate::messages::error_bare)?,
         };
-        let path = std::env::current_dir().unwrap().join(format!("{}_{}.json", ctx.global.crate_name.clone(), rand::random::<u16>()));
+        let path = std::env::current_dir().unwrap().join(
+            format!("{}.json",
+                path.krate.iter().chain(path.segments.iter())
+                    .map(|x| x.as_ref().as_str()).collect::<Vec<&str>>().join("_")));
         let file = std::fs::OpenOptions::new()
             .create(true)
             .append(true)

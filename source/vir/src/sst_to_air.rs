@@ -2756,12 +2756,11 @@ pub(crate) fn body_stm_to_air(
         let path = std::env::current_dir().unwrap().join(format!("{}.json", ctx.global.crate_name.clone()));
         let file = std::fs::OpenOptions::new()
             .create(true)
-            .truncate(true)
-            .write(true)
+            .append(true)
             .open(path)
             .unwrap();
 
-        let _ = serde_json::to_writer(file, &f);
+        let _ = serde_json::to_writer_pretty(file, &f);
     } else {
         let query = Arc::new(QueryX { local: Arc::new(local), assertion });
         let commands = if is_nonlinear {

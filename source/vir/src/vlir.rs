@@ -187,7 +187,15 @@ impl TryFrom<&crate::ast::UnaryOpr> for UnaryOp {
     type Error = String;
     fn try_from(v: &crate::ast::UnaryOpr) -> Result<Self,Self::Error> {
         Ok(match v {
-            _ => return Err(format!("Unsupported UnaryOpr: {:?}", v)),
+            crate::ast::UnaryOpr::Box(_) => UnaryOp::Id,
+            crate::ast::UnaryOpr::Unbox(_) => UnaryOp::Id,
+            crate::ast::UnaryOpr::HasType(_) |
+            crate::ast::UnaryOpr::IsVariant { datatype:_, variant:_ } |
+            crate::ast::UnaryOpr::TupleField { tuple_arity:_, field:_ } |
+            crate::ast::UnaryOpr::Field(_) |
+            crate::ast::UnaryOpr::IntegerTypeBound(_, _) |
+            crate::ast::UnaryOpr::CustomErr(_) =>
+                return Err(format!("Unsupported UnaryOpr: {:?}", v)),
         })
     }
 }

@@ -43,6 +43,7 @@ use std::collections::{BTreeMap, HashSet};
 use std::convert::TryInto;
 use std::mem::swap;
 use std::sync::Arc;
+use rand;
 
 #[inline(always)]
 pub(crate) fn fun_to_air_ident(fun: &Fun) -> Ident {
@@ -2536,7 +2537,7 @@ pub(crate) fn body_stm_to_air(
             require: reqs.clone().try_into().map_err(crate::messages::error_bare)?,
             ensure: Arc::new(post_condition.ens_exps.clone()).try_into().map_err(crate::messages::error_bare)?,
         };
-        let path = std::env::current_dir().unwrap().join(format!("{}.json", ctx.global.crate_name.clone()));
+        let path = std::env::current_dir().unwrap().join(format!("{}_{}.json", ctx.global.crate_name.clone(), rand::random::<u16>()));
         let file = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -2544,6 +2545,7 @@ pub(crate) fn body_stm_to_air(
             .unwrap();
 
         let _ = serde_json::to_writer_pretty(file, &f);
+
         #[cfg(feature = "singular")]
         {
             // parameters, requires, ensures to Singular Query

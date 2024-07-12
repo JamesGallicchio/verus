@@ -2093,6 +2093,7 @@ dependencies = [
  "indexmap 1.9.3",
  "num-bigint 0.4.4",
  "num-traits",
+ "rand 0.8.5",
  "serde",
  "serde_json",
  "sha2",
